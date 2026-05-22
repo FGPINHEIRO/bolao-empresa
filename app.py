@@ -30,11 +30,28 @@ def requisicao_supabase(metodo, endpoint, json_data=None, params=None, custom_he
 
 def fazer_login(email, password):
     res = requisicao_supabase("POST", "auth/v1/token?grant_type=password", json_data={"email": email, "password": password})
-    return (res.json()["access_token"], res.json()["user"]["id"]) if res and res.status_code == 200 else (None, None)
+    if res and res.status_code == 200:
+        dados = res.json()
+        return dados["access_token"], dados["user"]["id"], None
+    else:
+        msg_erro = "E-mail ou senha incorretos."
+        try:
+            if res and "error_description" in res.json():
+                msg_erro = res.json()["error_description"]
+        except: pass
+        return None, None, msg_erro
 
 def cadastrar_usuario(email, password):
     res = requisicao_supabase("POST", "auth/v1/signup", json_data={"email": email, "password": password})
-    return res is not None and res.status_code in [200, 201]
+    if res and res.status_code in [200, 201]:
+        return True, None
+    else:
+        msg_erro = "Erro desconhecido ao criar conta."
+        try:
+            if res and "msg" in res.json(): msg_erro = res.json()["msg"]
+            elif res and "error_description" in res.json(): msg_erro = res.json()["error_description"]
+        except: pass
+        return False, msg_erro
 
 def buscar_dados(tabela):
     res = requisicao_supabase("GET", f"rest/v1/{tabela}?select=*")
@@ -53,15 +70,16 @@ def calcular_pontos(gols_p_a, gols_p_b, gols_r_a, gols_r_b):
 if "logado" not in st.session_state:
     st.session_state.update({"logado": False, "token": None, "user_id": None, "email": "", "nome_usuario": ""})
 
-# --- INTERFACE DE LOGIN ORIGINAL ---
+# --- INTERFACE DE LOGIN ORIGINAL CORRIGIDA ---
 if not st.session_state.logado:
     st.title("⚽ Launchpad - Bolão da Empresa")
     aba_l, aba_c = st.tabs(["Entrar", "Criar Conta"])
+    
     with aba_l:
-        u = st.text_input("E-mail corporativo")
-        s = st.text_input("Senha", type="password")
+        u = st.text_input("E-mail corporativo", key="login_email")
+        s = st.text_input("Senha", type="password", key="login_senha")
         if st.button("Acessar Painel"):
-            token, uid = fazer_login(u, s)
+            token, uid, erro_login = fazer_login(u, s)
             if token:
                 st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
                 p_comp = buscar_dados(f"palpites_competicao?id_usuario=eq.{uid}")
@@ -69,13 +87,22 @@ if not st.session_state.logado:
                     st.session_state.nome_usuario = p_comp[0]["nome_participante"]
                 st.rerun()
             else:
-                st.error("Acesso negado. Certifique-se de que o e-mail foi confirmado ou desligue a checagem no Supabase.")
+                st.error(f"Erro: {erro_login}")
+                
     with aba_c:
-        nu = st.text_input("Novo E-mail")
-        ns = st.text_input("Nova Senha (mín. 6 dígitos)", type="password")
+        nu = st.text_input("Novo E-mail", key="cad_email")
+        ns = st.text_input("Nova Senha (mín. 6 dígitos)", type="password", key="cad_senha")
         if st.button("Registrar"):
-            if cadastrar_usuario(nu, ns): st.success("Conta criada! Vá para a aba 'Entrar'.")
-            else: st.error("Erro ao registrar conta.")
+            sucesso, erro_cad = cadastrar_usuario(nu, ns)
+            if sucesso:
+                st.success("Conta criada com sucesso! Tentando realizar login automático...")
+                # Tenta logar automaticamente para facilitar
+                token, uid, _ = fazer_login(nu, ns)
+                if token:
+                    st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": nu})
+                st.rerun()
+            else:
+                st.error(f"Não foi possível registrar: {erro_cad}")
 
 # --- SISTEMA LOGADO ---
 else:
@@ -172,8 +199,6 @@ else:
         st.header("📊 Classificação")
         todos_palpites = buscar_dados("palpites")
         todos_palpites_comp = buscar_dados("palpites_competicao")
-        res_comp = buscar_dados("resultados_competicao")
-        r_c = res_comp[0] if res_comp else {}
 
         mapa_nomes = {p["id_usuario"]: p.get("nome_participante", "Sem nome") for p in todos_palpites_comp if p.get("nome_participante")}
 
@@ -224,13 +249,13 @@ else:
                     nome_p = usr.get("nome_participante", "Nome não definido")
                     uid_p = usr["id_usuario"]
                     palpites_feitos = len([p for p in todos_palpites_banco if p["id_usuario"] == uid_p])
-                    faltam = max(0, total_jogos - palpites_feitos)
+                    faltam = max(0, total_jogos - pallets_feitos) if 'pallets_feitos' in locals() else max(0, total_jogos - palpites_feitos)
                     
                     st.markdown(f"👤 **{nome_p}** | Feitos: {palpites_feitos} | **Faltam: {faltam}**")
 
             with sub2:
                 with st.form("novojogodefin"):
-                    fase = st.selectbox("Fase", ["Fase de Grupos", "Dezesseis-avos de Final", "Oitavas de Final", "Quartas de Final", "Semifinal", "Grande Final"])
+                    fase = st.selectbox("Fase", ["Fase de Grupos", "Oitavas de Final", "Quartas de Final", "Semifinal", "Grande Final"])
                     ta = st.text_input("Time A")
                     tb = st.text_input("Time B")
                     dt = st.text_input("Data (AAAA-MM-DD HH:MM:SS)", value="2026-06-12 15:00:00")
