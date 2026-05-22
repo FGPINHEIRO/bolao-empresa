@@ -2,12 +2,12 @@ import streamlit as st
 import requests
 from datetime import datetime, timedelta
 
-# --- CONFIGURAÇÕES DO SUPABASE ---
+# --- CONFIGURAÇÕES DO SUPABASE (Chave e e-mail corrigidos) ---
 SUPABASE_URL = "https://hxkeahtcsmmehucmndhk.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInZiI6Imh4a2VhaHRjc21tZWh1Y21uZGhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0NTA5ODgsImV4cCI6MjA5NTAyNjk4OH0.62RDcA4bWJA-0Ie3DWFnaFC4lWvoOTDgCWagmOJ2X34"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh4a2VhaHRjc21tZWh1Y21uZGhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0NTA5ODgsImV4cCI6MjA5NTAyNjk4OH0.62RDcA4bWJA-0Ie3DWFnaFC4lWvoOTDgCWagmOJ2X34"
 
-# INSIRA SEU E-MAIL DE ADMINISTRADOR AQUI PARA LIBERAR O PAINEL DE CONTROLE:
-EMAIL_ADMIN = "seu_email@empresa.com" 
+# CONFIGURADO COM O SEU E-MAIL REAL PARA ACESSO ADMIN:
+EMAIL_ADMIN = "felipegpinheiro@hotmail.com" 
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -37,13 +37,12 @@ def buscar_dados(tabela):
     return res.json() if res.status_code == 200 else []
 
 def buscar_usuarios():
-    # Fallback elegante usando os e-mails únicos cruzados na tabela de palpites para listar participantes
     res = requisicao_supabase("GET", "rest/v1/palpites?select=id_usuario")
     if res.status_code == 200:
         return list(set([p["id_usuario"] for p in res.json()]))
     return []
 
-# --- MOTOR DE CÁLCULO DE PONTUAÇÃO (ITEM 1) ---
+# --- MOTOR DE CÁLCULO DE PONTUAÇÃO ---
 def calcular_pontos(gols_p_a, gols_p_b, gols_r_a, gols_r_b):
     if gols_r_a is None or gols_r_b is None:
         return 0
@@ -51,7 +50,6 @@ def calcular_pontos(gols_p_a, gols_p_b, gols_r_a, gols_r_b):
     if gols_p_a == gols_r_a and gols_p_b == gols_r_b:
         return 5
     
-    # Identificação de ganhadores
     vencedor_palpite = "A" if gols_p_a > gols_p_b else "B" if gols_p_b > gols_p_a else "Empate"
     vencedor_real = "A" if gols_r_a > gols_r_b else "B" if gols_r_b > gols_r_a else "Empate"
     
@@ -91,7 +89,6 @@ if not st.session_state.logado:
 else:
     is_admin = st.session_state.email == EMAIL_ADMIN
     
-    # Criação das Abas Dinâmicas baseadas nos pedidos do usuário
     abas = ["Jogos e Palpites", "Palpites da Competição", "Ranking Geral", "Ver Palpites Alheios"]
     if is_admin:
         abas.append("⚙️ Painel do Admin")
@@ -110,7 +107,6 @@ else:
             data_j = datetime.fromisoformat(j["data_hora"].replace("Z", ""))
             bloqueado = agora > (data_j - timedelta(minutes=30))
             
-            # Identifica se o usuário já tinha palpites salvos no banco
             p_salvo = palpites_dict.get(j["id"], {"gols_time_a": 0, "gols_time_b": 0})
             
             with st.container():
@@ -132,10 +128,9 @@ else:
                             st.toast("Palpite computado!")
                 st.markdown("---")
 
-    # --- ABA 2: PALPITES DA COMPETIÇÃO (ITEM 6) ---
+    # --- ABA 2: PALPITES DA COMPETIÇÃO ---
     with abas_gui[1]:
         st.header("🏆 Palpites de Longo Prazo")
-        # Definição fictícia do primeiro jogo da copa para travar os palpites extras
         primeiro_jogo_copa = datetime(2026, 6, 11, 16, 0) 
         competicao_bloqueada = agora > primeiro_jogo_copa
 
@@ -154,11 +149,11 @@ else:
                 h_auth = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}", "Prefer": "resolution=merge-duplicates"}
                 payload = {"id_usuario": st.session_state.user_id, "campeon": c_camp, "vice": c_vice, "artilheiro": c_art, "melhor_jogador": c_melhor}
                 requisicao_supabase("POST", "rest/v1/palpites_competicao", json_data=payload, custom_headers=h_auth)
-                st.success("Palpites de competição atualizados!")
+                st.success("Palpites de competição updated!")
         else:
             st.warning("🔒 O torneio já iniciou. Palpites de competição trancados.")
 
-    # --- ABA 3: RANKING EM TEMPO REAL (ITEM 3) ---
+    # --- ABA 3: RANKING EM TEMPO REAL ---
     with abas_gui[2]:
         st.header("📊 Classificação da Empresa")
         todos_jogos = buscar_dados("jogos")
@@ -185,7 +180,6 @@ else:
             if r_c.get("artilheiro") and pc["artilheiro"] == r_c["artilheiro"]: pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + 25
             if r_c.get("melhor_jogador") and pc["melhor_jogador"] == r_c["melhor_jogador"]: pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + 25
 
-        # Conversão e exibição do Ranking ordenado de cima para baixo
         ranking_ordenado = sorted(pontos_usuarios.items(), key=lambda item: item[1], reverse=True)
         
         if ranking_ordenado:
@@ -194,7 +188,7 @@ else:
         else:
             st.info("Nenhum ponto computado até o momento.")
 
-    # --- ABA 4: VER PALPITES ALHEIOS (ITEM 4) ---
+    # --- ABA 4: VER PALPITES ALHEIOS ---
     with abas_gui[3]:
         st.header("👀 Espiar Palpites Concluídos")
         st.write("Os palpites de outros usuários só ficam visíveis quando faltarem menos de 30 minutos para o jogo começar.")
@@ -215,7 +209,7 @@ else:
             else:
                 st.error("🔒 Segredo! Os palpites desta partida só serão revelados 30 minutos antes do início do jogo.")
 
-    # --- ABA 5: PAINEL DO ADMINISTRADOR (ITENS 2, 5 E PALPITES EXTRA) ---
+    # --- ABA 5: PAINEL DO ADMINISTRADOR ---
     if is_admin:
         with abas_gui[4]:
             st.header("⚙️ Controle Geral do Administrador")
@@ -228,7 +222,8 @@ else:
                 d_h = st.text_input("Data/Hora no padrão (AAAA-MM-DD HH:MM:SS)", value="2026-06-27 15:00:00")
                 if st.form_submit_button("Lançar Novo Jogo no Sistema"):
                     payload = {"time_a": t_a, "time_b": t_b, "data_hora": f"{d_h}+00", "fase": fase_selecionada}
-                    requisicao_supabase("POST", "jogos", json_data=payload)
+                    # Corrigido o endpoint de inserção de 'jogos' para 'rest/v1/jogos'
+                    requisicao_supabase("POST", "rest/v1/jogos", json_data=payload)
                     st.success("Novo confronto disponibilizado para palpites!")
 
             st.subheader("2. Imputar Resultados Reais dos Jogos")
