@@ -7,8 +7,8 @@ import streamlit.components.v1 as components
 SUPABASE_URL = "https://hxkeahtcsmmehucmndhk.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInZiI6Imh4a2VhaHRjc21tZWh1Y21uZGhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0NTA5ODgsImV4cCI6MjA5NTAyNjk4OH0.62RDcA4bWJA-0Ie3DWFnaFC4lWvoOTDgCWagmOJ2X34"
 
-# SUBSTITUA PELO SEU E-MAIL DE ADMINISTRADOR:
-EMAIL_ADMIN = "felipegpinheiro@hotmail.com" 
+# DEFINA AQUI QUEM SERÁ O NOME DO ADMINISTRADOR:
+NOME_ADMIN = "felipe" 
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -19,27 +19,35 @@ HEADERS = {
 st.set_page_config(page_title="Super Bolão Copa 2026", page_icon="🏆", layout="wide")
 
 # --- FUNÇÕES DE BANCO DE DADOS (API) ---
-def requisicao_supabase(metodo, endpoint, json_data=None, params=None, custom_headers=None):
+def requisicao_supabase(metodo, endpoint, json_data=None, params=None):
     url = f"{SUPABASE_URL}/{endpoint}"
-    headers = custom_headers if custom_headers else HEADERS
     try:
-        if metodo == "GET": return requests.get(url, headers=headers, params=params)
-        if metodo == "POST": return requests.post(url, headers=headers, json=json_data)
-        if metodo == "PATCH": return requests.patch(url, headers=headers, json=json_data)
+        if metodo == "GET": return requests.get(url, headers=HEADERS, params=params)
+        if metodo == "POST": return requests.post(url, headers=HEADERS, json=json_data)
+        if metodo == "PATCH": return requests.patch(url, headers=HEADERS, json=json_data)
     except Exception:
         return None
-
-def fazer_login(email, password):
-    res = requisicao_supabase("POST", "auth/v1/token?grant_type=password", json_data={"email": email, "password": password})
-    return (res.json()["access_token"], res.json()["user"]["id"]) if res and res.status_code == 200 else (None, None)
-
-def cadastrar_usuario(email, password):
-    res = requisicao_supabase("POST", "auth/v1/signup", json_data={"email": email, "password": password})
-    return res is not None and res.status_code in [200, 201]
 
 def buscar_dados(tabela):
     res = requisicao_supabase("GET", f"rest/v1/{tabela}?select=*")
     return res.json() if res and res.status_code == 200 else []
+
+def obter_ou_criar_usuario(nome):
+    nome_limpo = nome.strip().lower()
+    if not nome_limpo: return None
+    
+    # Verifica se usuário já existe
+    res = requisicao_supabase("GET", f"rest/v1/usuarios_bolao?nome_usuario=eq.{nome_limpo}")
+    if res and res.status_code == 200 and len(res.json()) > 0:
+        return res.json()[0]["id_usuario"], res.json()[0]["nome_usuario"]
+    
+    # Se não existe, cria um novo
+    novo_id = nome_limpo  # O próprio nome serve como ID único
+    payload = {"id_usuario": novo_id, "nome_usuario": nome_limpo}
+    res_criacao = requisicao_supabase("POST", "rest/v1/usuarios_bolao", json_data=payload)
+    if res_criacao and res_criacao.status_code in [200, 201]:
+        return novo_id, nome_limpo
+    return None, None
 
 # --- MOTOR DE CÁLCULO DE PONTUAÇÃO ---
 def calcular_pontos(gols_p_a, gols_p_b, gols_r_a, gols_r_b):
@@ -51,32 +59,32 @@ def calcular_pontos(gols_p_a, gols_p_b, gols_r_a, gols_r_b):
     if gols_p_a == gols_r_a or gols_p_b == gols_r_b: return 1
     return 0
 
+# --- CONTROLE DE SESSÃO ---
 if "logado" not in st.session_state:
-    st.session_state.update({"logado": False, "token": None, "user_id": None, "email": ""})
+    st.session_state.update({"logado": False, "user_id": None, "nome": ""})
 
-# --- INTERFACE DE LOGIN ---
+# --- INTERFACE DE ACESSO SIMPLIFICADO ---
 if not st.session_state.logado:
     st.title("⚽ Launchpad - Bolão da Empresa")
-    aba_l, aba_c = st.tabs(["Entrar", "Criar Conta"])
-    with aba_l:
-        u = st.text_input("E-mail corporativo")
-        s = st.text_input("Senha", type="password")
-        if st.button("Acessar Painel"):
-            token, uid = fazer_login(u, s)
-            if token:
-                st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
+    st.write("Digite o seu nome de usuário para entrar ou criar sua conta automaticamente.")
+    
+    nome_input = st.text_input("Seu Nome de Usuário (Sem espaços ou acentos preferencialmente)")
+    
+    if st.button("Entrar no Bolão"):
+        if nome_input:
+            uid, nome_salvo = obter_ou_criar_usuario(nome_input)
+            if uid:
+                st.session_state.update({"logado": True, "user_id": uid, "nome": nome_salvo})
+                st.success(f"Bem-vindo(a), {nome_salvo.capitalize()}!")
                 st.rerun()
-            else: st.error("Acesso negado. Verifique as suas credenciais.")
-    with aba_c:
-        nu = st.text_input("Novo E-mail")
-        ns = st.text_input("Nova Senha (mín. 6 dígitos)", type="password")
-        if st.button("Registrar"):
-            if cadastrar_usuario(nu, ns): st.success("Conta criada! Mude para a aba 'Entrar'.")
-            else: st.error("Erro ao registrar usuário.")
+            else:
+                st.error("Erro ao processar o seu usuário no banco de dados.")
+        else:
+            st.warning("Por favor, digite um nome válido.")
 
 # --- SISTEMA LOGADO ---
 else:
-    is_admin = st.session_state.email == EMAIL_ADMIN
+    is_admin = st.session_state.nome == NOME_ADMIN.strip().lower()
     agora = datetime.utcnow()
     
     # Coleta global de dados
@@ -89,17 +97,11 @@ else:
         if jg.get("time_b"): times_disponiveis.add(jg["time_b"])
     lista_times = sorted(list(times_disponiveis))
     
-    # Fallback para o cronômetro funcionar caso o banco esteja vazio
-    if not jogos_banco:
-        jogos_para_relogio = [{"data_hora": "2026-06-11 19:00:00+00", "time_a": "México", "time_b": "EUA", "fase": "Grupos"}]
-    else:
-        jogos_para_relogio = jogos_banco
-            
-    st.title("🏆 Super Bolão Copa 2026")
+    st.title(f"🏆 Super Bolão Copa 2026 — Olá, {st.session_state.nome.capitalize()}!")
     
     # Cronômetro de travas dinâmico
     proximas_travas = []
-    for j in jogos_para_relogio:
+    for j in jogos_banco:
         d_limpa = j["data_hora"].replace("Z", "").split("+")[0]
         try:
             d_trava = datetime.fromisoformat(d_limpa) - timedelta(minutes=30)
@@ -134,8 +136,6 @@ else:
         </script>
         """
         components.html(js_relogio, height=95)
-    else:
-        st.markdown("<div style='background-color:#1E293B; padding:15px; text-align:center; border-radius:10px; color:#EF4444; font-weight:bold;'>🔒 Inscrições trancadas!</div>", unsafe_allow_html=True)
 
     abas = ["Jogos e Palpites", "Palpites da Competição", "Ranking Geral", "Ver Palpites Alheios"]
     if is_admin: abas.append("⚙️ Painel do Admin")
@@ -145,7 +145,7 @@ else:
     with abas_gui[0]:
         st.header("🎯 Palpites dos Jogos")
         if not jogos_banco:
-            st.info("💡 A tabela de jogos está vazia no momento. Adicione jogos usando o painel administrativo.")
+            st.info("💡 A tabela de jogos está vazia no momento.")
         
         palpites = buscar_dados(f"palpites?id_usuario=eq.{st.session_state.user_id}")
         palpites_dict = {p["id_jogo"]: p for p in palpites}
@@ -170,9 +170,11 @@ else:
                     elif bloqueado: st.info("🔒 Trancado")
                     else:
                         if st.button("Salvar", key=f"save_{j['id']}"):
-                            headers_auth = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}", "Prefer": "resolution=merge-duplicates"}
                             payload = {"id_usuario": st.session_state.user_id, "id_jogo": j["id"], "gols_time_a": g_a, "gols_time_b": g_b}
-                            requisicao_supabase("POST", "rest/v1/palpites", json_data=payload, custom_headers=headers_auth)
+                            # Adiciona Prefer header para fazer merge/upsert se houver duplicata
+                            url_post = f"{SUPABASE_URL}/rest/v1/palpites"
+                            headers_upsert = {**HEADERS, "Prefer": "resolution=merge-duplicates"}
+                            requests.post(url_post, headers=headers_upsert, json=payload)
                             st.toast("Palpite gravado!")
                 st.markdown("---")
 
@@ -185,9 +187,7 @@ else:
         p_comp = buscar_dados(f"palpites_competicao?id_usuario=eq.{st.session_state.user_id}")
         p_c_atual = p_comp[0] if p_comp else {"campeon": "", "vice": "", "artilheiro": "", "melhor_jogador": ""}
 
-        st.write("Dê os seus palpites definitivos antes da abertura da Copa!")
-        
-        # MELHORIA: Caixas de seleção com base nas seleções reais cadastradas na tabela de jogos
+        # Escolha baseada dinamicamente nos times reais cadastrados na tabela de jogos
         if lista_times:
             idx_camp = lista_times.index(p_c_atual["campeon"]) if p_c_atual["campeon"] in lista_times else 0
             idx_vice = lista_times.index(p_c_atual["vice"]) if p_c_atual["vice"] in lista_times else 0
@@ -204,9 +204,10 @@ else:
 
         if not competicao_bloqueada:
             if st.button("Gravar Palpites Especiais"):
-                h_auth = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}", "Prefer": "resolution=merge-duplicates"}
                 payload = {"id_usuario": st.session_state.user_id, "campeon": c_camp, "vice": c_vice, "artilheiro": c_art, "melhor_jogador": c_melhor}
-                requisicao_supabase("POST", "rest/v1/palpites_competicao", json_data=payload, custom_headers=h_auth)
+                url_post = f"{SUPABASE_URL}/rest/v1/palpites_competicao"
+                headers_upsert = {**HEADERS, "Prefer": "resolution=merge-duplicates"}
+                requests.post(url_post, headers=headers_upsert, json=payload)
                 st.success("Palpites especiais salvos!")
         else:
             st.warning("🔒 Torneio em andamento. Inscrições bloqueadas.")
@@ -218,6 +219,8 @@ else:
         todos_palpites_comp = buscar_dados("palpites_competicao")
         res_comp = buscar_dados("resultados_competicao")
         r_c = res_comp[0] if res_comp else {}
+        todos_usuarios_banco = buscar_dados("usuarios_bolao")
+        mapa_nomes = {u["id_usuario"]: u["nome_usuario"] for u in todos_usuarios_banco}
 
         pontos_usuarios = {}
         for p in todos_palpites:
@@ -237,7 +240,8 @@ else:
         ranking_ordenado = sorted(pontos_usuarios.items(), key=lambda item: item[1], reverse=True)
         if ranking_ordenado:
             for posicao, (u_id, total_pts) in enumerate(ranking_ordenado, start=1):
-                st.subheader(f"🥇 {posicao}º Lugar: Usuário {u_id[:8]}... — {total_pts} Pontos")
+                nome_exibicao = mapa_nomes.get(u_id, u_id).upper()
+                st.subheader(f"🥇 {posicao}º Lugar: {nome_exibicao} — {total_pts} Pontos")
         else:
             st.info("Nenhum ponto computado até o momento.")
 
@@ -255,8 +259,12 @@ else:
                 
                 if agora > (data_j_sel - timedelta(minutes=30)):
                     palpites_desse_jogo = buscar_dados(f"palpites?id_jogo=eq.{id_j_sel}")
+                    todos_usuarios_banco = buscar_dados("usuarios_bolao")
+                    mapa_nomes = {u["id_usuario"]: u["nome_usuario"] for u in todos_usuarios_banco}
+                    
                     for plp in palpites_desse_jogo:
-                        st.text(f"Usuário {plp['id_usuario'][:8]}... chutou: {j_sel['time_a']} {plp['gols_time_a']} x {plp['gols_time_b']} {j_sel['time_b']}")
+                        nome_p = mapa_nomes.get(plp['id_usuario'], plp['id_usuario']).capitalize()
+                        st.text(f"Usuário {nome_p} chutou: {j_sel['time_a']} {plp['gols_time_a']} x {plp['gols_time_b']} {j_sel['time_b']}")
                 else:
                     st.error("🔒 Palpites protegidos! Visíveis apenas 30 minutos antes do jogo.")
         else:
@@ -267,7 +275,6 @@ else:
         with abas_gui[4]:
             st.header("⚙️ Controle Geral do Administrador")
             
-            # NOVIDADE: SUB-ABA DE AUDITORIA DE CONTAS CRIADAS
             sub_aba1, sub_aba2, sub_aba3, sub_aba4 = st.tabs([
                 "👥 Contas & Pendências", 
                 "➕ Inserir Jogos", 
@@ -276,33 +283,33 @@ else:
             ])
             
             with sub_aba1:
-                st.subheader("Usuários Registrados e Status de Palpites")
+                st.subheader("Usuários Cadastrados no Sistema e Status de Palpites")
+                todos_usuarios_cadastrados = buscar_dados("usuarios_bolao")
                 todos_palpites_banco = buscar_dados("palpites")
-                
-                # Agrupar usuários únicos que já possuem alguma interação
-                usuarios_unicos = list(set([p["id_usuario"] for p in todos_palpites_banco]))
-                if st.session_state.user_id not in usuarios_unicos:
-                    usuarios_unicos.append(st.session_state.user_id)
-                
                 total_jogos_cadastrados = len(jogos_banco)
                 
                 st.write(f"**Total de jogos na base:** {total_jogos_cadastrados}")
                 
-                dados_tabela_usuarios = []
-                for idx, uid in enumerate(usuarios_unicos, start=1):
-                    # Contar quantos jogos esse usuário específico já palpitou
-                    palpites_do_usuario = len([p for p in todos_palpites_banco if p["id_usuario"] == uid])
-                    faltam = max(0, total_jogos_cadastrados - p_do_usuario) if (total_jogos_cadastrados - palpites_do_usuario) > 0 else 0
-                    
-                    st.markdown(f"""
-                    <div style="padding:10px; background-color:#1E293B; border-radius:5px; margin-bottom:8px; border-left: 5px solid {'#10B981' if faltam == 0 else '#EF4444'};">
-                        <strong>👤 Participante {idx}:</strong> <code>{uid}</code> <br>
-                        ✅ Palpites Feitos: <strong>{palpites_do_usuario}</strong> | 🚨 Palpites Restantes: <strong style="color:{'#10B981' if faltam == 0 else '#F87171'}">{faltam}</strong>
-                    </div>
-                    """, unsafe_allow_html=True)
+                if todos_usuarios_cadastrados:
+                    for idx, user in enumerate(todos_usuarios_cadastrados, start=1):
+                        uid = user["id_usuario"]
+                        nome_usuario_print = user["nome_usuario"].upper()
+                        
+                        # Contar palpites feitos por esse usuário
+                        palpites_do_usuario = len([p for p in todos_palpites_banco if p["id_usuario"] == uid])
+                        faltam = max(0, total_jogos_cadastrados - palpites_do_usuario)
+                        
+                        st.markdown(f"""
+                        <div style="padding:10px; background-color:#1E293B; border-radius:5px; margin-bottom:8px; border-left: 5px solid {'#10B981' if faltam == 0 else '#EF4444'};">
+                            <strong>👤 Usuário {idx}:</strong> <span style="color:#38BDF8; font-weight:bold;">{nome_usuario_print}</span> <br>
+                            ✅ Palpites Salvos: <strong>{palpites_do_usuario}</strong> | 🚨 Palpites Restantes: <strong style="color:{'#10B981' if faltam == 0 else '#F87171'}">{faltam}</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.info("Nenhum usuário cadastrado até o momento.")
 
             with sub_aba2:
-                st.subheader("Inserir Confronto (Fase de Grupos ou Mata-Mata)")
+                st.subheader("Inserir Confronto")
                 with st.form("novos_confrontos"):
                     fase_selecionada = st.selectbox("Fase", ["Fase de Grupos", "Dezesseis-avos de Final", "Oitavas de Final", "Quartas de Final", "Semifinal", "Terceiro Lugar", "Grande Final"])
                     t_a = st.text_input("Seleção A")
@@ -314,7 +321,7 @@ else:
                         if res_add and res_add.status_code in [200, 201]:
                             st.success("Jogo inserido com sucesso!")
                             st.rerun()
-                        else: st.error("Erro ao salvar. Verifique o formato de data.")
+                        else: st.error("Erro ao salvar o jogo.")
 
             with sub_aba3:
                 st.subheader("Imputar Resultados Reais")
