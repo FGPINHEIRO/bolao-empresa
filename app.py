@@ -71,7 +71,7 @@ if not st.session_state.logado:
                         st.session_state.nome_usuario = p_comp[0]["nome_participante"]
                 st.rerun()
             else: 
-                st.error("Acesso negado. Certifique-se de que o e-mail foi confirmado ou desligue a checagem no Supabase.")
+                st.error("Acesso negado. Certifique-se de que o e-mail foi verificado ou as credenciais estão corretas.")
     with aba_c:
         nu = st.text_input("Novo E-mail")
         ns = st.text_input("Nova Senha (mín. 6 dígitos)", type="password")
@@ -83,7 +83,7 @@ if not st.session_state.logado:
 
 # --- SISTEMA LOGADO ---
 else:
-    # Coleta de nome robusta contra loops
+    # Coleta de nome inicial
     if not st.session_state.nome_usuario:
         st.title("👋 Bem-vindo ao Super Bolão!")
         st.subheader("Para continuar, defina o nome que aparecerá no Ranking Geral da empresa:")
@@ -114,7 +114,7 @@ else:
     
     jogos_banco = buscar_dados("jogos")
     
-    # Tratamento seguro para conversão de datas (Evita o TypeError da imagem 1)
+    # Processamento do Cronômetro Superior
     proximas_travas = []
     for j in jogos_banco:
         if not j.get("data_hora"):
@@ -174,12 +174,11 @@ else:
     with abas_gui[0]:
         st.header("🎯 Palpites dos Jogos")
         if not jogos_banco:
-            st.info("💡 A tabela de jogos está vazia no Supabase no momento.")
+            st.info("💡 A tabela de jogos está vazia no Supabase no momento. Acesse o 'Painel do Admin' para cadastrar partidas.")
         
         palpites = buscar_dados(f"palpites?id_usuario=eq.{st.session_state.user_id}")
         palpites_dict = {p["id_jogo"]: p for p in palpites}
 
-        # Tratamento seguro para ordenação e renderização de datas
         jogos_validos = []
         for x in jogos_banco:
             try:
@@ -341,18 +340,17 @@ else:
                 
                 st.metric("Total de Jogos Oficiais Cadastrados", total_jogos)
                 
-                # Filtragem inteligente para garantir que registros nulos de teste não quebrem a lista
-                usuarios_validos = [u for u in todos_usuarios_comp if u.get("nome_participante") and len(u["nome_participante"].strip()) > 0]
+                usuarios_validos = [u for u in todos_usuarios_comp if u.get("nome_participante") and len(str(u["nome_participante"]).strip()) > 0]
                 
                 if not usuarios_validos:
-                    st.info("Nenhum usuário ativo registrou o nome de participante de forma válida ainda.")
+                    st.info("Nenhum usuário ativo registrou o nome de participante no sistema ainda.")
                 else:
                     for usr in usuarios_validos:
                         nome_p = usr["nome_participante"]
                         uid_p = usr["id_usuario"]
                         
                         palpites_feitos = len([p for p in todos_palpites_banco if p["id_usuario"] == uid_p])
-                        faltam = max(0, total_jogos - grandfathered_variable_if_any := palpites_feitos)
+                        faltam = max(0, total_jogos - palpites_feitos)
                         
                         cor_borda = "#10B981" if faltam == 0 else "#EF4444"
                         st.markdown(f"""
@@ -369,7 +367,7 @@ else:
                     t_a = st.text_input("Seleção A")
                     t_b = st.text_input("Seleção B")
                     d_h = st.text_input("Data/Hora no padrão (AAAA-MM-DD HH:MM:SS)", value="2026-06-11 16:00:00")
-                    if st.form_submit_button("Lançar Novo Jogo no System"):
+                    if st.form_submit_button("Lançar Novo Jogo no Sistema"):
                         payload = {"time_a": t_a, "time_b": t_b, "data_hora": f"{d_h}+00", "fase": fase_selecionada}
                         res_add = requisicao_supabase("POST", "rest/v1/jogos", json_data=payload)
                         if res_add and res_add.status_code in [200, 201]:
