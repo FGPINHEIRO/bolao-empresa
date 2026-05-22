@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from datetime import datetime, timedelta
+import streamlit.components.v1 as components
 
 # --- CONFIGURAÇÕES DO SUPABASE ---
 SUPABASE_URL = "https://hxkeahtcsmmehucmndhk.supabase.co"
@@ -36,32 +37,16 @@ def buscar_dados(tabela):
     res = requisicao_supabase("GET", f"rest/v1/{tabela}?select=*")
     return res.json() if res.status_code == 200 else []
 
-def buscar_usuarios():
-    res = requisicao_supabase("GET", "rest/v1/palpites?select=id_usuario")
-    if res.status_code == 200:
-        return list(set([p["id_usuario"] for p in res.json()]))
-    return []
-
 # --- MOTOR DE CÁLCULO DE PONTUAÇÃO ---
 def calcular_pontos(gols_p_a, gols_p_b, gols_r_a, gols_r_b):
-    if gols_r_a is None or gols_r_b is None:
-        return 0
-    # 1. Acerto em cheio do placar (5 pontos)
-    if gols_p_a == gols_r_a and gols_p_b == gols_r_b:
-        return 5
-    
+    if gols_r_a is None or gols_r_b is None: return 0
+    if gols_p_a == gols_r_a and gols_p_b == gols_r_b: return 5
     vencedor_palpite = "A" if gols_p_a > gols_p_b else "B" if gols_p_b > gols_p_a else "Empate"
     vencedor_real = "A" if gols_r_a > gols_r_b else "B" if gols_r_b > gols_r_a else "Empate"
-    
-    # 2. Acerto do ganhador ou do empate (3 pontos)
-    if vencedor_palpite == vencedor_real:
-        return 3
-    # 3. Acerto do placar de apenas um dos times (1 ponto)
-    if gols_p_a == gols_r_a or gols_p_b == gols_r_b:
-        return 1
+    if vencedor_palpite == vencedor_real: return 3
+    if gols_p_a == gols_r_a or gols_p_b == gols_r_b: return 1
     return 0
 
-# --- CONTROLE DE SESSÃO ---
 if "logado" not in st.session_state:
     st.session_state.update({"logado": False, "token": None, "user_id": None, "email": ""})
 
@@ -88,33 +73,107 @@ if not st.session_state.logado:
 # --- SISTEMA LOGADO ---
 else:
     is_admin = st.session_state.email == EMAIL_ADMIN
-    
-    abas = ["Jogos e Palpites", "Palpites da Competição", "Ranking Geral", "Ver Palpites Alheios"]
-    if is_admin:
-        abas.append("⚙️ Painel do Admin")
-        
-    abas_gui = st.tabs(abas)
     agora = datetime.utcnow()
+    
+    # --- CRONÔMETRO DINÂMICO NO TOPO (JavaScript) ---
+    jogos_banco = buscar_dados("jogos")
+    proximas_travas = []
+    
+    for j in jogos_banco:
+        d_limpa = j["data_hora"].replace("Z", "").split("+")[0]
+        d_trava = datetime.fromisoformat(d_limpa) - timedelta(minutes=30)
+        if d_trava > agora:
+            proximas_travas.append(d_trava)
+            
+    st.title("🏆 Super Bolão Copa 2026")
+    
+    if proximas_travas:
+        proxima_trava = min(proximas_travas)
+        # Formata a data alvo para o JavaScript ler corretamente
+        iso_alvo = proxima_trava.strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        # Injeção de HTML/JS para contagem regressiva viva de segundo em segundo
+        js_relogio = f"""
+        <div style="background-color: #1E293B; border-radius: 10px; padding: 12px; text-align: center; font-family: sans-serif; color: #F8FAFC; border: 1px solid #334155;">
+            <span style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #94A3B8; font-weight: bold;">⏱️ Tempo restante para o fechamento dos próximos palpites:</span>
+            <div id="countdown" style="font-size: 28px; font-weight: bold; color: #38BDF8; margin-top: 5px;">Carregando cronômetro...</div>
+        </div>
+        <script>
+            var targetDate = new Date("{iso_alvo}").getTime();
+            var x = setInterval(function() {{
+                var now = new Date().getTime();
+                // Ajustando fuso para UTC neutro
+                var nowUTC = now + (new Date().getTimezoneOffset() * 60000);
+                var distance = targetDate - nowUTC;
+                
+                if (distance < 0) {{
+                    clearInterval(x);
+                    document.getElementById("countdown").innerHTML = "PALPITES ENCERRADOS! Atualize a página.";
+                    document.getElementById("countdown").style.color = "#EF4444";
+                    return;
+                }}
+                var days = Math.floor(distance / (1000 * 60 * 60 * 24));
+                var hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                var minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+                var seconds = Math.floor((distance % (1000 * 60)) / 1000);
+                
+                var txt = "";
+                if(days > 0) txt += days + "d ";
+                txt += hours + "h " + minutes + "m " + seconds + "s";
+                document.getElementById("countdown").innerHTML = txt;
+            }}, 1000);
+        </script>
+        """
+        components.html(js_relogio, height=95)
+    else:
+        st.markdown("<div style='background-color:#1E293B; padding:15px; text-align:center; border-radius:10px; color:#EF4444; font-weight:bold;'>🔒 Todos os palpites da primeira fase já foram encerrados!</div>", unsafe_allow_html=True)
+
+    # Configuração das Abas
+    abas = ["Jogos e Palpites", "Palpites da Competição", "Ranking Geral", "Ver Palpites Alheios"]
+    if is_admin: abas.append("⚙️ Painel do Admin")
+    abas_gui = st.tabs(abas)
 
     # --- ABA 1: JOGOS E PALPITES ---
     with abas_gui[0]:
         st.header("🎯 Palpites dos Jogos")
-        jogos = buscar_dados("jogos")
         palpites = buscar_dados(f"palpites?id_usuario=eq.{st.session_state.user_id}")
         palpites_dict = {p["id_jogo"]: p for p in palpites}
 
-        for j in sorted(jogos, key=lambda x: x["data_hora"]):
-            # Tratamento da data para remover qualquer informação oculta de fuso horário (limpa o Z ou o +00)
+        for j in sorted(jogos_banco, key=lambda x: x["data_hora"]):
             data_limpa = j["data_hora"].replace("Z", "").split("+")[0]
             data_j = datetime.fromisoformat(data_limpa)
-            
-            # Agora a comparação funciona perfeitamente (ambas são naive)
-            bloqueado = agora > (data_j - timedelta(minutes=30))
+            data_trava_jogo = data_j - timedelta(minutes=30)
+            bloqueado = agora > data_trava_jogo
             
             p_salvo = palpites_dict.get(j["id"], {"gols_time_a": 0, "gols_time_b": 0})
             
+            # --- CALCULAR TEMPO RESTANTE DO JOGO ESPECÍFICO ---
+            if not bloqueado:
+                delta_tempo = data_trava_jogo - agora
+                total_horas = int(delta_tempo.total_seconds() // 3600)
+                total_minutos = int((delta_tempo.total_seconds() % 3600) // 60)
+                
+                if total_horas > 24:
+                    txt_tempo = f"⏳ Fecha em {delta_tempo.days} dias"
+                    cor_tempo = "#10B981" # Verde
+                elif total_horas >= 1:
+                    txt_tempo = f"⏳ Fecha em {total_horas}h {total_minutos}min"
+                    cor_tempo = "#F59E0B" # Laranja
+                else:
+                    txt_tempo = f"🚨 FECHA EM {total_minutos} MINUTOS!"
+                    cor_tempo = "#EF4444" # Vermelho
+            else:
+                txt_tempo = "🔒 Inscrições Encerradas"
+                cor_tempo = "#64748B" # Cinza
+
             with st.container():
-                st.markdown(f"**Fase:** {j['fase']} | 📅 {data_j.strftime('%d/%m/%Y às %H:%M')} UTC")
+                # Cabeçalho do card do jogo com o badge do tempo restante
+                col_info1, col_info2 = st.columns([2, 1])
+                with col_info1:
+                    st.markdown(f"**Fase:** {j['fase']} | 📅 {data_j.strftime('%d/%m/%Y às %H:%M')} UTC")
+                with col_info2:
+                    st.markdown(f"<p style='text-align:right; font-weight:bold; color:{cor_tempo}; margin:0;'>{txt_tempo}</p>", unsafe_allow_html=True)
+                
                 col1, col2, col3, col4 = st.columns([3, 1, 3, 2])
                 with col1: g_a = st.number_input(f"{j['time_a']}", min_value=0, value=int(p_salvo["gols_time_a"]), disabled=bloqueado, key=f"inp_a_{j['id']}")
                 with col2: st.markdown("<p style='text-align:center;font-size:24px;margin-top:20px;'>X</p>", unsafe_allow_html=True)
@@ -160,7 +219,6 @@ else:
     # --- ABA 3: RANKING EM TEMPO REAL ---
     with abas_gui[2]:
         st.header("📊 Classificação da Empresa")
-        todos_jogos = buscar_dados("jogos")
         todos_palpites = buscar_dados("palpites")
         todos_palpites_comp = buscar_dados("palpites_competicao")
         res_comp = buscar_dados("resultados_competicao")
@@ -168,15 +226,13 @@ else:
 
         pontos_usuarios = {}
 
-        # Processar pontos por jogo
         for p in todos_palpites:
             uid = p["id_usuario"]
-            jogo = next((j for j in todos_jogos if j["id"] == p["id_jogo"]), None)
+            jogo = next((j for j in jogos_banco if j["id"] == p["id_jogo"]), None)
             if jogo and jogo["gols_real_a"] is not None:
                 pts = calcular_pontos(p["gols_time_a"], p["gols_time_b"], jogo["gols_real_a"], jogo["gols_real_b"])
                 pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + pts
 
-        # Processar pontos especiais da competição
         for pc in todos_palpites_comp:
             uid = pc["id_usuario"]
             if r_c.get("campeon") and pc["campeon"] == r_c["campeon"]: pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + 50
@@ -197,15 +253,13 @@ else:
         st.header("👀 Espiar Palpites Concluídos")
         st.write("Os palpites de outros usuários só ficam visíveis quando faltarem menos de 30 minutos para o jogo começar.")
         
-        jogos_disponiveis = buscar_dados("jogos")
-        lista_opcoes_jogos = [f"{j['id']} | {j['time_a']} x {j['time_b']}" for j in jogos_disponiveis]
+        lista_opcoes_jogos = [f"{j['id']} | {j['time_a']} x {j['time_b']}" for j in jogos_banco]
         escolha_jogo = st.selectbox("Selecione a partida para auditar:", lista_opcoes_jogos)
 
         if escolha_jogo:
             id_j_sel = int(escolha_jogo.split(" | ")[0])
-            j_sel = next(j for j in jogos_disponiveis if j["id"] == id_j_sel)
+            j_sel = next(j for j in jogos_banco if j["id"] == id_j_sel)
             
-            # Correção de fuso horário também na aba de espiar
             data_limpa_sel = j_sel["data_hora"].replace("Z", "").split("+")[0]
             data_j_sel = datetime.fromisoformat(data_limpa_sel)
             
@@ -233,8 +287,7 @@ else:
                     st.success("Novo confronto disponibilizado para palpites!")
 
             st.subheader("2. Imputar Resultados Reais dos Jogos")
-            jogos_cadastrados = buscar_dados("jogos")
-            id_j_res = st.selectbox("Escolha o jogo para atualizar o placar definitivo:", [f"{jg['id']} | {jg['time_a']} x {jg['time_b']}" for jg in jogos_cadastrados])
+            id_j_res = st.selectbox("Escolha o jogo para atualizar o placar definitivo:", [f"{jg['id']} | {jg['time_a']} x {jg['time_b']}" for jg in jogos_banco])
             if id_j_res:
                 id_real = int(id_j_res.split(" | ")[0])
                 res_a = st.number_input("Gols do Time A", min_value=0, step=1, key="res_a")
