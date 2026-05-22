@@ -3,6 +3,7 @@ import requests
 from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 import time
+import json
 
 # --- CONFIGURAÇÕES DO SUPABASE ---
 SUPABASE_URL = "https://hxkeahtcsmmehucmndhk.supabase.co"
@@ -60,8 +61,59 @@ def calcular_pontos(gols_p_a, gols_p_b, gols_r_a, gols_r_b):
     if gols_p_a == gols_r_a or gols_p_b == gols_r_b: return 1
     return 0
 
+# --- COMPONENTE DE PERSISTÊNCIA (LOCALSTORAGE) ---
+# Esse código injeta um JS invisível para salvar e ler a sessão direto no navegador do usuário
+def gerenciar_persistenca_sessao():
+    js_script = """
+    <script>
+        const enviarParaStreamlit = (dados) => {
+            window.parent.postMessage({type: 'streamlit:setComponentValue', value: dados}, '*');
+        };
+        
+        window.addEventListener('message', (e) => {
+            if (e.data.type === 'gravar_sessao') {
+                localStorage.setItem('bolao_session', JSON.stringify(e.data.payload));
+            } else if (e.data.type === 'limpar_sessao') {
+                localStorage.removeItem('bolao_session');
+            }
+        });
+
+        // Tenta recuperar a sessão ao carregar a página
+        setTimeout(() => {
+            const sessaoSalva = localStorage.getItem('bolao_session');
+            if (sessaoSalva) {
+                enviarParaStreamlit(JSON.parse(sessaoSalva));
+            } else {
+                enviarParaStreamlit({vazio: true});
+            }
+        }, 300);
+    </script>
+    """
+    dados_navegador = components.html(js_script, height=0, width=0)
+    return dados_navegador
+
+# Inicialização padrão da sessão interna do Streamlit
 if "logado" not in st.session_state:
     st.session_state.update({"logado": False, "token": None, "user_id": None, "email": "", "nome_usuario": ""})
+
+# Executa o componente invisível na abertura/refresh da página
+dados_recuperados = gerenciar_persistenca_sessao()
+
+# Se o Streamlit detectou que existiam dados salvos no navegador e a sessão do state atual está deslogada, restaura!
+if not st.session_state.logado and dados_recuperados and not getattr(dados_recuperados, 'vazio', False):
+    try:
+        # Dependendo da versão do Streamlit, tratamos o retorno do componente de forma segura
+        if isinstance(dados_recuperados, dict) and "token" in dados_recuperados:
+            st.session_state.update({
+                "logado": True,
+                "token": dados_recuperados["token"],
+                "user_id": dados_recuperados["user_id"],
+                "email": dados_recuperados["email"],
+                "nome_usuario": dados_recuperados["nome_usuario"]
+            })
+            st.rerun()
+    except:
+        pass
 
 # --- INTERFACE DE LOGIN / CADASTRO ---
 if not st.session_state.logado:
@@ -73,13 +125,18 @@ if not st.session_state.logado:
         if st.button("Acessar Painel"):
             token, uid = fazer_login(u, s)
             if token:
-                st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
                 h_auth_login = {**HEADERS, "Authorization": f"Bearer {token}"}
                 perfil = buscar_dados(f"perfis?id_usuario=eq.{uid}", custom_headers=h_auth_login)
-                if perfil and isinstance(perfil, list) and len(perfil) > 0:
-                    st.session_state.nome_usuario = perfil[0].get("nome_participante", "Usuário")
-                else:
-                    st.session_state.nome_usuario = "Usuário"
+                nome_usr = perfil[0].get("nome_participante", "Usuário") if perfil and isinstance(perfil, list) and len(perfil) > 0 else "Usuário"
+                
+                # Guarda no State do Streamlit
+                st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u, "nome_usuario": nome_usr})
+                
+                # MODIFICAÇÃO: Dispara comando para o JavaScript salvar os dados no LocalStorage do Navegador
+                payload_local = {"token": token, "user_id": uid, "email": u, "nome_usuario": nome_usr}
+                st.components.v1.html(f"<script>window.parent.postMessage({{type: 'gravar_sessao', payload: {json.dumps(payload_local)}}}, '*');</script>", height=0, width=0)
+                
+                time.sleep(0.2)
                 st.rerun()
             else: 
                 st.error("Acesso negado. Certifique-se de que o e-mail foi verificado ou se os dados estão corretos.")
@@ -146,8 +203,12 @@ else:
 
     # --- BARRA LATERAL ---
     st.sidebar.markdown(f"**Usuário:** {st.session_state.nome_usuario}")
+    
+    # MODIFICAÇÃO: O botão de Log Out agora apaga explicitamente a chave do localStorage do navegador
     if st.sidebar.button("Log Out"):
+        st.components.v1.html("<script>window.parent.postMessage({type: 'limpar_sessao'}, '*');</script>", height=0, width=0)
         st.session_state.update({"logado": False, "token": None, "user_id": None, "email": "", "nome_usuario": ""})
+        time.sleep(0.2)
         st.rerun()
 
     abas = ["Jogos e Palpites", "Jogos e Resultados", "Palpites da Competição", "Ranking Geral", "Ver Palpites Alheios"]
@@ -215,13 +276,14 @@ else:
                     st.markdown("ℹ️ *Você ainda não enviou palpites para este confronto.*")
                 st.markdown("---")
 
-    # --- ABA 2: JOGOS E RESULTADOS (TABELA OFICIAL CORRIGIDA) ---
+    # --- ABA 2: JOGOS E RESULTADOS (TABELA OFICIAL) ---
     with abas_gui[1]:
         st.header("📋 Tabela de Jogos e Placares Oficiais")
         st.write("Abaixo você confere o andamento das partidas e o impacto direto na sua pontuação.")
         
         palpites_usuario_res = buscar_dados(f"palpites?id_usuario=eq.{st.session_state.user_id}")
-        palpites_res_dict = {int(p["id_jogo"]): p for p in palpites_usuario_res if p.get("id_jogo") is not None}
+        palpites_res_dict = {int(p["id_jogo"]): p for p in \
+                             palpites_usuario_res if p.get("id_jogo") is not None}
         
         jogos_processados = []
         for x in jogos_banco:
@@ -232,8 +294,6 @@ else:
             
         for data_j, j in sorted(jogos_processados, key=lambda val: val[0]):
             id_j = int(j["id"])
-            
-            # Validação aprimorada para evitar falsos negativos ou vazios do Supabase
             tem_placar_oficial = j.get("gols_real_a") is not None and j.get("gols_real_b") is not None and str(j["gols_real_a"]).strip() != "" and str(j["gols_real_b"]).strip() != ""
             palpite_efetuado = palpites_res_dict.get(id_j, None)
             
@@ -310,9 +370,15 @@ else:
                 st.success("Palpites salvos!")
         else: st.warning("🔒 Torneio iniciado. Palpites trancados.")
 
-    # --- ABA 4: RANKING GENERATIVO E DINÂMICO (CORRIGIDO COM SANITIZAÇÃO) ---
+    # --- ABA 4: RANKING GENERATIVO E DINÂMICO ---
     with abas_gui[3]:
         st.header("📊 Classificação da Empresa")
+        
+        # Função interna para garantir comparação numérica
+        def converter_int(valor):
+            try: return int(valor)
+            except: return -1
+
         todos_palpites = buscar_dados("palpites")
         todos_perfis = buscar_dados("perfis")
         res_comp = buscar_dados("resultados_competicao")
@@ -320,25 +386,26 @@ else:
         todos_palpites_comp = buscar_dados("palpites_competicao")
 
         mapa_nomes = {p["id_usuario"]: p.get("nome_participante", "Anônimo") for p in todos_perfis if p.get("nome_participante")}
-
-        # Inicializa todos os usuários com 0 pontos para garantir que apareçam no ranking mesmo sem pontos
         pontos_usuarios = {p["id_usuario"]: 0 for p in todos_perfis if p.get("id_usuario")}
         
         for p in todos_palpites:
             uid = p["id_usuario"]
             jogo = next((j for j in jogos_banco if j["id"] == p["id_jogo"]), None)
             
-            # Validação robusta de tipos e conteúdo para sincronizar imediatamente
+            # Verificação estrita de resultado oficial
             if jogo and jogo.get("gols_real_a") is not None and jogo.get("gols_real_b") is not None:
-                if str(jogo["gols_real_a"]).strip() != "" and str(jogo["gols_real_b"]).strip() != "":
-                    pontos_calculados = calcular_pontos(
-                        int(p["gols_time_a"]), 
-                        int(p["gols_time_b"]), 
-                        int(jogo["gols_real_a"]), 
-                        int(jogo["gols_real_b"])
-                    )
-                    pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + pontos_calculados
+                # Converte tudo para int antes de comparar
+                palp_a = converter_int(p["gols_time_a"])
+                palp_b = converter_int(p["gols_time_b"])
+                real_a = converter_int(jogo["gols_real_a"])
+                real_b = converter_int(jogo["gols_real_b"])
+                
+                # Só calcula se o resultado oficial for válido (>= 0)
+                if real_a >= 0 and real_b >= 0:
+                    pts = calcular_pontos(palp_a, palp_b, real_a, real_b)
+                    pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + pts
 
+        # Adiciona bônus da competição
         for pc in todos_palpites_comp:
             uid = pc["id_usuario"]
             if uid in pontos_usuarios:
@@ -347,11 +414,14 @@ else:
                 if r_c.get("artilheiro") and pc["artilheiro"] == r_c["artilheiro"]: pontos_usuarios[uid] += 25
                 if r_c.get("melhor_jogador") and pc["melhor_jogador"] == r_c["melhor_jogador"]: pontos_usuarios[uid] += 25
 
+        # Exibição do ranking
         ranking_ordenado = sorted(pontos_usuarios.items(), key=lambda item: item[1], reverse=True)
         if ranking_ordenado:
             for pos, (u_id, total_pts) in enumerate(ranking_ordenado, start=1):
-                st.subheader(f"🥇 {pos}º Lugar: {mapa_nomes.get(u_id, f'Usuário {u_id[:5]}')} — {total_pts} Pontos")
-        else: st.info("Nenhum ponto computado até o momento. Aguardando resultados de jogos oficiais ou parciais.")
+                nome_exibir = mapa_nomes.get(u_id, f"Usuário {u_id[:5]}")
+                st.write(f"### 🥇 {pos}º: {nome_exibir} — **{total_pts} pontos**")
+        else: 
+            st.info("Nenhum ponto computado até o momento.")
 
     # --- ABA 5: VER PALPITES ALHEIOS ---
     with abas_gui[4]:
@@ -434,6 +504,6 @@ else:
                         
                         if st.button("Gravar Placar Oficial / Atualizar Ranking"):
                             requisicao_supabase("PATCH", f"rest/v1/jogos?id=eq.{id_real}", json_data={"gols_real_a": int(res_a), "gols_real_b": int(res_b)})
-                            st.success("Placar atualizado! O ranking foi recalculado.")
+                            st.success("Placar updated! O ranking foi recalculado.")
                             time.sleep(0.4)
                             st.rerun()
