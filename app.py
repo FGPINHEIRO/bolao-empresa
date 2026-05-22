@@ -74,13 +74,12 @@ if not st.session_state.logado:
             if token:
                 st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
                 
-                # Busca o perfil na tabela para checar o nome
+                # Busca o perfil na tabela para checar se já tem nome
                 h_auth_login = {**HEADERS, "Authorization": f"Bearer {token}"}
                 perfil = buscar_dados(f"perfis?id_usuario=eq.{uid}", custom_headers=h_auth_login)
                 
                 if perfil and isinstance(perfil, list) and len(perfil) > 0:
                     nome_salvo = perfil[0].get("nome_participante", "").strip()
-                    # Se o nome for o padrão da trigger ou estiver em branco, deixamos vazio para forçar o cadastro
                     if nome_salvo and nome_salvo != "Usuário Sem Nome":
                         st.session_state.nome_usuario = nome_salvo
                     else:
@@ -107,27 +106,39 @@ if not st.session_state.logado:
 
 # --- SISTEMA APÓS LOGIN ---
 else:
-    # SE O USUÁRIO LOGOU MAS NÃO TEM NOME VALIDO SALVO (CASO DOS ANTIGOS)
+    # CORREÇÃO: Força o cadastro de nome apenas se estiver realmente vazio na sessão E no banco
     if not st.session_state.nome_usuario or st.session_state.nome_usuario == "Usuário Sem Nome":
-        st.title("👋 Atualize seu Perfil!")
-        st.subheader("Antes de acessar os palpites, digite seu nome completo para o Ranking Geral:")
+        # Fazer uma última checagem rápida no banco para evitar falsos negativos de cache
+        h_auth_check = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}"}
+        perfil_check = buscar_dados(f"perfis?id_usuario=eq.{st.session_state.user_id}", custom_headers=h_auth_check)
         
-        nome_antigo = st.text_input("Seu Nome e Sobrenome:")
-        if st.button("Salvar Perfil e Entrar"):
-            if len(nome_antigo.strip()) < 3:
-                st.error("Por favor, digite um nome válido com no mínimo 3 letras.")
-            else:
-                nome_limpo = nome_antigo.strip()
-                h_auth_patch = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}"}
-                
-                # Salva o nome correto na tabela de perfis
-                requisicao_supabase("PATCH", f"rest/v1/perfis?id_usuario=eq.{st.session_state.user_id}", json_data={"nome_participante": nome_limpo}, custom_headers=h_auth_patch)
-                
-                # Atualiza a sessão e libera o app
-                st.session_state.nome_usuario = nome_limpo
-                st.success("Nome atualizado com sucesso!")
+        if perfil_check and isinstance(perfil_check, list) and len(perfil_check) > 0:
+            nome_banco = perfil_check[0].get("nome_participante", "").strip()
+            if nome_banco and nome_banco != "Usuário Sem Nome":
+                st.session_state.nome_usuario = nome_banco
                 st.rerun()
-        st.stop() # Trava o resto da página enquanto não salvar o nome
+
+        # Se mesmo checando no banco continuar sem nome, exibe a tela de bloqueio
+        if not st.session_state.nome_usuario or st.session_state.nome_usuario == "Usuário Sem Nome":
+            st.title("👋 Atualize seu Perfil!")
+            st.subheader("Antes de acessar os palpites, digite seu nome completo para o Ranking Geral:")
+            
+            nome_antigo = st.text_input("Seu Nome e Sobrenome:", key="input_nome_obrigatorio")
+            if st.button("Salvar Perfil e Entrar"):
+                if len(nome_antigo.strip()) < 3:
+                    st.error("Por favor, digite um nome válido com no mínimo 3 letras.")
+                else:
+                    nome_limpo = nome_antigo.strip()
+                    h_auth_patch = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}"}
+                    
+                    # Salva o nome correto na tabela de perfis
+                    requisicao_supabase("PATCH", f"rest/v1/perfis?id_usuario=eq.{st.session_state.user_id}", json_data={"nome_participante": nome_limpo}, custom_headers=h_auth_patch)
+                    
+                    # Força o salvamento definitivo na sessão antes do rerun
+                    st.session_state.nome_usuario = nome_limpo
+                    st.success("Nome atualizado com sucesso!")
+                    st.rerun()
+            st.stop() 
 
     # --- FLUXO NORMAL DO SISTEMA LIBERADO ---
     is_admin = st.session_state.email == EMAIL_ADMIN
@@ -182,9 +193,8 @@ else:
 
     abas = ["Jogos e Palpites", "Palpites da Competição", "Ranking Geral", "Ver Palpites Alheios"]
     if is_admin: abas.append("⚙️ Painel do Admin")
-    st.tabs(abas) # Apenas declara as abas principais para manter a compatibilidade visual
     
-    # Reatribuição das abas para as variáveis de interface gui
+    # CORREÇÃO: Removida a linha duplicada st.tabs(abas) que quebrava o layout abaixo
     abas_gui = st.tabs(abas)
 
     # --- ABA 1: JOGOS E PALPITES ---
