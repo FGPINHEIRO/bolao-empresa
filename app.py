@@ -156,11 +156,18 @@ else:
     
     abas_gui = st.tabs(abas)
 
-    # --- ABA 1: JOGOS E PALPITES ---
+   # --- ABA 1: JOGOS E PALPITES ---
     with abas_gui[0]:
         st.header("🎯 Palpites dos Jogos")
+        
+        # Garante a busca dos palpites atualizados convertendo o ID para texto na rota
         palpites = buscar_dados(f"palpites?id_usuario=eq.{st.session_state.user_id}")
-        palpites_dict = {p["id_jogo"]: p for p in palpites}
+        
+        # Criamos o dicionário forçando o ID do jogo a ser um número inteiro para bater com o banco
+        palpites_dict = {}
+        for p in palpites:
+            if "id_jogo" in p and p["id_jogo"] is not None:
+                palpites_dict[int(p["id_jogo"])] = p
 
         jogos_validos = []
         for x in jogos_banco:
@@ -170,11 +177,12 @@ else:
             except: pass
 
         for data_j, j in sorted(jogos_validos, key=lambda val: val[0]):
+            id_jogo_int = int(j["id"]) # Força o ID do jogo a ser Inteiro
             data_trava_jogo = data_j - timedelta(minutes=30)
             bloqueado = agora > data_trava_jogo
             
-            # Recupera o palpite salvo ou inicia zerado na interface
-            p_salvo = palpites_dict.get(j["id"], None)
+            # Recupera o palpite salvo
+            p_salvo = p_palpite = palpites_dict.get(id_jogo_int, None)
             gols_a_inicial = int(p_salvo["gols_time_a"]) if p_salvo else 0
             gols_b_inicial = int(p_salvo["gols_time_b"]) if p_salvo else 0
             
@@ -188,26 +196,39 @@ else:
                 
                 col1, col2, col3, col4 = st.columns([3, 1, 3, 2])
                 with col1: 
-                    g_a = st.number_input(f"{j['time_a']}", min_value=0, value=gols_a_inicial, disabled=bloqueado, key=f"inp_a_{j['id']}")
+                    g_a = st.number_input(f"{j['time_a']}", min_value=0, value=gols_a_inicial, disabled=bloqueado, key=f"inp_a_{id_jogo_int}")
                 with col2: 
                     st.markdown("<p style='text-align:center;font-size:24px;margin-top:20px;'>X</p>", unsafe_allow_html=True)
                 with col3: 
-                    g_b = st.number_input(f"{j['time_b']}", min_value=0, value=gols_b_inicial, disabled=bloqueado, key=f"inp_b_{j['id']}")
+                    g_b = st.number_input(f"{j['time_b']}", min_value=0, value=gols_b_inicial, disabled=bloqueado, key=f"inp_b_{id_jogo_int}")
                 with col4:
-                    # Mostra o placar real caso o admin já tenha imputado
                     if j.get("gols_real_a") is not None:
                         st.metric("Resultado Oficial", f"{j['gols_real_a']} x {j['gols_real_b']}")
                     elif bloqueado: 
                         st.info("🔒 Bloqueado")
                     else:
-                        if st.button("Salvar Palpite", key=f"save_{j['id']}"):
+                        if st.button("Salvar Palpite", key=f"save_{id_jogo_int}"):
                             h_auth = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}", "Prefer": "resolution=merge-duplicates"}
-                            # Upsert/Merge baseado nas chaves únicas (id_usuario, id_jogo)
-                            requisicao_supabase("POST", "rest/v1/palpites", json_data={"id_usuario": st.session_state.user_id, "id_jogo": j["id"], "gols_time_a": g_a, "gols_time_b": g_b}, custom_headers=h_auth)
-                            st.toast("Palpite atualizado com sucesso!")
-                            st.rerun()
                             
-                # MODIFICAÇÃO: Exibe o palpite atualmente gravado no banco de dados
+                            # Enviamos explicitamente os IDs como inteiros/formatos nativos
+                            payload_palpite = {
+                                "id_usuario": st.session_state.user_id, 
+                                "id_jogo": id_jogo_int, 
+                                "gols_time_a": int(g_a), 
+                                "gols_time_b": int(g_b)
+                            }
+                            
+                            resposta = requisicao_supabase("POST", "rest/v1/palpites", json_data=payload_palpite, custom_headers=h_auth)
+                            
+                            if resposta and resposta.status_code in [200, 201]:
+                                st.toast("⚽ Palpite salvo no sistema!")
+                                import time
+                                time.sleep(0.4) # Pequena pausa para o Supabase processar antes do refresh
+                                st.rerun()
+                            else:
+                                st.error(f"Erro ao salvar no banco. Código: {resposta.status_code if resposta else 'Sem Conexão'}")
+                            
+                # Exibe o palpite atualmente gravado no banco de dados
                 if p_salvo:
                     st.markdown(f"ℹ️ *Palpite atual válido no sistema:* **{p_salvo['gols_time_a']} x {p_salvo['gols_time_b']}**")
                 else:
