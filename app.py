@@ -54,7 +54,7 @@ def calcular_pontos(gols_p_a, gols_p_b, gols_r_a, gols_r_b):
 if "logado" not in st.session_state:
     st.session_state.update({"logado": False, "token": None, "user_id": None, "email": "", "nome_usuario": ""})
 
-# --- INTERFACE DE LOGIN ORIGINAL ---
+# --- INTERFACE DE LOGIN ---
 if not st.session_state.logado:
     st.title("⚽ Launchpad - Bolão da Empresa")
     aba_l, aba_c = st.tabs(["Entrar", "Criar Conta"])
@@ -65,6 +65,7 @@ if not st.session_state.logado:
             token, uid = fazer_login(u, s)
             if token:
                 st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
+                # Verifica se o usuário já possui um nome salvo anteriormente
                 p_comp = buscar_dados(f"palpites_competicao?id_usuario=eq.{uid}")
                 if p_comp and p_comp[0].get("nome_participante"):
                     st.session_state.nome_usuario = p_comp[0]["nome_participante"]
@@ -82,7 +83,7 @@ if not st.session_state.logado:
 
 # --- SISTEMA LOGADO ---
 else:
-    # SE O USUÁRIO NÃO TIVER UM NOME NO BANCO, TRAVA A TELA ATÉ ELE CRIAR UM
+    # CAPTURA DE NOME: Se não tiver nome salvo no banco nem na sessão, força a criação do perfil
     if not st.session_state.nome_usuario:
         st.title("👋 Bem-vindo ao Super Bolão!")
         st.subheader("Para continuar, defina o nome que aparecerá no Ranking Geral da empresa:")
@@ -105,13 +106,7 @@ else:
     
     jogos_banco = buscar_dados("jogos")
     
-    # Extração dinâmica de todos os países únicos que constam na tabela de jogos
-    lista_paises = set()
-    for jg in jogos_banco:
-        if jg.get("time_a"): lista_paises.add(jg["time_a"])
-        if jg.get("time_b"): lista_paises.add(jg["time_b"])
-    lista_paises_ordenada = sorted(list(lista_paises))
-    
+    # Fallback para o relógio se o banco estiver vazio
     if not jogos_banco:
         jogos_para_relogio = [
             {"data_hora": "2026-06-11 19:00:00+00", "time_a": "México", "time_b": "Estados Unidos", "fase": "Grupos"}
@@ -122,6 +117,7 @@ else:
     st.title("🏆 Super Bolão Copa 2026")
     st.caption(f"Participante: **{st.session_state.nome_usuario}** ({st.session_state.email})")
     
+    # Processamento do Cronômetro Superior
     proximas_travas = []
     for j in jogos_para_relogio:
         d_limpa = j["data_hora"].replace("Z", "").split("+")[0].split(".")[0]
@@ -225,7 +221,7 @@ else:
                             st.toast("Palpite computado!")
                 st.markdown("---")
 
-    # --- ABA 2: PALPITES DA COMPETIÇÃO (RESTRIÇÃO DE SELEÇÕES EXPLICITADA) ---
+    # --- ABA 2: PALPITES DA COMPETIÇÃO (REVISADA COM SELECTBOX) ---
     with abas_gui[1]:
         st.header("🏆 Palpites de Longo Prazo")
         primeiro_jogo_copa = datetime(2026, 6, 11, 16, 0) 
@@ -234,19 +230,28 @@ else:
         p_comp = buscar_dados(f"palpites_competicao?id_usuario=eq.{st.session_state.user_id}")
         p_c_atual = p_comp[0] if p_comp else {"campeon": "", "vice": "", "artilheiro": "", "melhor_jogador": ""}
 
-        st.write("Selecione seus palpites definitivos com base nos países cadastrados no campeonato!")
+        st.write("Dê os seus palpites definitivos até o primeiro jogo do torneio começar!")
         
-        # Validação para exibir selectbox apenas se houver países cadastrados nos jogos
-        if lista_paises_ordenada:
-            idx_camp = lista_paises_ordenada.index(p_c_atual["campeon"]) if p_c_atual["campeon"] in lista_paises_ordenada else 0
-            idx_vice = lista_paises_ordenada.index(p_c_atual["vice"]) if p_c_atual["vice"] in lista_paises_ordenada else 0
+        # Extração dinâmica de países ativos da tabela de jogos
+        paises_set = set()
+        for jg in jogos_banco:
+            if jg.get("time_a"): paises_set.add(jg["time_a"])
+            if jg.get("time_b"): paises_set.add(jg["time_b"])
+        lista_paises = sorted(list(paises_set))
+
+        # Renderização dinâmica dependendo se já existem confrontos cadastrados
+        if lista_paises:
+            # Encontra o índice correspondente ao palpite salvo anteriormente (fallback para 0 se vazio)
+            idx_camp = lista_paises.index(p_c_atual["campeon"]) if p_c_atual["campeon"] in lista_paises else 0
+            idx_vice = lista_paises.index(p_c_atual["vice"]) if p_c_atual["vice"] in lista_paises else 0
             
-            c_camp = st.selectbox("Quem será o Campeão? (50 pts)", options=lista_paises_ordenada, index=idx_camp, disabled=competicao_bloqueada)
-            c_vice = st.selectbox("Quem será o Vice-Campeão? (25 pts)", options=lista_paises_ordenada, index=idx_vice, disabled=competicao_bloqueada)
+            c_camp = st.selectbox("Quem será o Campeão? (50 pts)", options=lista_paises, index=idx_camp, disabled=competicao_bloqueada)
+            c_vice = st.selectbox("Quem será o Vice-Campeão? (25 pts)", options=lista_paises, index=idx_vice, disabled=competicao_bloqueada)
         else:
+            st.warning("⚠️ O administrador ainda não inseriu jogos. Insira o nome dos países manualmente por enquanto:")
             c_camp = st.text_input("Quem será o Campeão? (50 pts)", value=p_c_atual["campeon"], disabled=competicao_bloqueada)
             c_vice = st.text_input("Quem será o Vice-Campeão? (25 pts)", value=p_c_atual["vice"], disabled=competicao_bloqueada)
-            
+
         c_art = st.text_input("Quem será o Artilheiro? (25 pts)", value=p_c_atual["artilheiro"], disabled=competicao_bloqueada)
         c_melhor = st.text_input("Quem será o Melhor Jogador? (25 pts)", value=p_c_atual["melhor_jogador"], disabled=competicao_bloqueada)
 
@@ -318,7 +323,7 @@ else:
         else:
             st.info("Nenhum jogo disponível.")
 
-    # --- ABA 5: PAINEL DO ADMINISTRADOR (LISTAGEM DE AUDITORIA DE PALPITES REFINADA) ---
+    # --- ABA 5: PAINEL DO ADMINISTRADOR (REVISADA COM RELATÓRIO) ---
     if is_admin:
         with abas_gui[4]:
             st.header("⚙️ Controle Geral do Administrador")
@@ -334,27 +339,21 @@ else:
                 st.metric("Total de Jogos Oficiais Cadastrados", total_jogos)
                 
                 if not todos_usuarios_comp:
-                    st.info("Nenhum usuário ativo registrou o nome até agora.")
+                    st.info("Nenhum usuário ativo registrou o nome no sistema até agora.")
                 else:
                     for usr in todos_usuarios_comp:
                         nome_p = usr.get("nome_participante", "Nome Não Definido")
                         uid_p = usr["id_usuario"]
                         
-                        # Procuramos o e-mail associado correspondente na mesma linha gerada
-                        # Nota: o sistema puxa o e-mail do próprio estado se for ele mesmo, ou do mapa se salvou. 
-                        # Como o Supabase na tabela restrita oculta a tabela nativa de Auth por segurança anon, 
-                        # usamos a amarração que o app faz ao gravar.
-                        
+                        # Calcula a quantidade exata de palpites feitos por esse ID de usuário
                         palpites_feitos = len([p for p in todos_palpites_banco if p["id_usuario"] == uid_p])
                         faltam = max(0, total_jogos - palpites_feitos)
                         
                         cor_borda = "#10B981" if faltam == 0 else "#EF4444"
                         st.markdown(f"""
-                        <div style="padding:15px; background-color:#1E293B; border-radius:8px; margin-bottom:12px; border-left: 6px solid {cor_borda}; font-family:sans-serif;">
-                            <span style="font-size:16px; font-weight:bold; color:#F8FAFC;">👤 Nome do Participante: {nome_p}</span><br>
-                            <span style="font-size:13px; color:#94A3B8;">🆔 ID único do Banco: {uid_p}</span><br>
-                            📊 Progresso: Palpites Enviados: <strong>{palpites_feitos} / {total_jogos}</strong> | 
-                            🚨 Palpites Restantes: <strong style='color:{cor_borda}'>{faltam}</strong>
+                        <div style="padding:12px; background-color:#1E293B; border-radius:6px; margin-bottom:10px; border-left: 6px solid {cor_borda};">
+                            <span style="font-size:16px; font-weight:bold; color:#F8FAFC;">👤 Nome: {nome_p}</span> <br>
+                            📊 Progresso: Palpites Feitos: <strong>{palpites_feitos} / {total_jogos}</strong> | 🚨 Restantes: <strong style='color:{cor_borda}'>{faltam}</strong>
                         </div>
                         """, unsafe_allow_html=True)
             
