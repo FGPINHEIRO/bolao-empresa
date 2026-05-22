@@ -33,7 +33,6 @@ def fazer_login(email, password):
     return (res.json()["access_token"], res.json()["user"]["id"]) if res and res.status_code == 200 else (None, None)
 
 def cadastrar_usuario(email, password, nome_completo):
-    # Envia o full_name dentro de options -> data para a Trigger do Supabase ler e criar o perfil com nome
     payload = {
         "email": email,
         "password": password,
@@ -85,7 +84,7 @@ if not st.session_state.logado:
                     st.session_state.nome_usuario = "Usuário"
                 st.rerun()
             else: 
-                st.error("Acesso negado. Verifique as suas credenciais.")
+                st.error("Acesso negado. Certifique-se de que o e-mail foi verificado ou se os dados estão corretos.")
     with aba_c:
         nu = st.text_input("Novo E-mail")
         nnome = st.text_input("Nome e Sobrenome Completo")
@@ -99,9 +98,9 @@ if not st.session_state.logado:
                 if cadastrar_usuario(nu, ns, nnome): 
                     st.success("Conta criada com sucesso! Mude para a aba 'Entrar' para acessar.")
                 else: 
-                    st.error("Erro ao registrar. O usuário pode já existir ou a senha é curta.")
+                    st.error("Erro ao registrar. O usuário pode já existir ou a senha é muito curta.")
 
-# --- SISTEMA APÓS LOGIN (FLUXO DIRETO) ---
+# --- SISTEMA APÓS LOGIN ---
 else:
     is_admin = st.session_state.email == EMAIL_ADMIN
     agora = datetime.utcnow()
@@ -284,21 +283,21 @@ else:
     # --- ABA 5: PAINEL DO ADMINISTRADOR ---
     if is_admin:
         with abas_gui[4]:
-            st.header("⚙️ Controle Geral do Administrator")
+            st.header("⚙️ Controle Geral do Administrador")
             sub_admin_1, sub_admin_2 = st.tabs(["👥 Usuários Cadastrados", "⚽ Cadastrar Jogos & Placar"])
             
             with sub_admin_1:
-                st.subheader("Gerenciamento de Usuários Ativos (Mapeados via SQL)")
+                st.subheader("Gerenciamento de Pendências da Empresa")
                 todos_palpites_banco = buscar_dados("palpites")
                 todos_perfis_banco = buscar_dados("perfis")
                 total_jogos = len(jogos_banco)
                 
-                st.metric("Total de Jogos Cadastrados", total_jogos)
+                st.metric("Total de Jogos Oficiais Cadastrados", total_jogos)
                 
                 usuarios_validos = [u for u in todos_perfis_banco if u.get("nome_participante") and len(str(u["nome_participante"]).strip()) > 0]
                 
                 if not usuarios_validos:
-                    st.info("Nenhum usuário ativo salvou o nome de perfil no sistema até agora.")
+                    st.info("Nenhum usuário ativo registrou o nome no sistema até agora.")
                 else:
                     for usr in usuarios_validos:
                         nome_p = usr["nome_participante"]
@@ -306,7 +305,6 @@ else:
                         email_p = usr["email"]
                         
                         palpites_feitos = len([p for p in todos_palpites_banco if p["id_usuario"] == uid_p])
-                        faltam = max(0, total_jogos - text_input if total_jogos > palpites_feitos else 0) # Segurança simples contra bugs de contagem
                         faltam = max(0, total_jogos - palpites_feitos)
                         cor_borda = "#10B981" if faltam == 0 else "#EF4444"
                         
