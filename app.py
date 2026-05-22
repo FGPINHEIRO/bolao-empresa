@@ -150,7 +150,6 @@ else:
         st.session_state.update({"logado": False, "token": None, "user_id": None, "email": "", "nome_usuario": ""})
         st.rerun()
 
-    # MODIFICAÇÃO: Inclusão da aba "Jogos e Resultados" na lista principal
     abas = ["Jogos e Palpites", "Jogos e Resultados", "Palpites da Competição", "Ranking Geral", "Ver Palpites Alheios"]
     if is_admin: abas.append("⚙️ Painel do Admin")
     
@@ -195,7 +194,7 @@ else:
                 with col2: st.markdown("<p style='text-align:center;font-size:24px;margin-top:20px;'>X</p>", unsafe_allow_html=True)
                 with col3: g_b = st.number_input(f"{j['time_b']}", min_value=0, value=gols_b_inicial, disabled=bloqueado, key=f"inp_b_{id_jogo_int}")
                 with col4:
-                    if j.get("gols_real_a") is not None:
+                    if j.get("gols_real_a") is not None and str(j["gols_real_a"]).strip() != "":
                         st.metric("Resultado Oficial", f"{j['gols_real_a']} x {j['gols_real_b']}")
                     elif bloqueado: st.info("🔒 Bloqueado")
                     else:
@@ -216,7 +215,7 @@ else:
                     st.markdown("ℹ️ *Você ainda não enviou palpites para este confronto.*")
                 st.markdown("---")
 
-    # --- NOVA ABA: JOGOS E RESULTADOS (TABELA OFICIAL) ---
+    # --- ABA 2: JOGOS E RESULTADOS (TABELA OFICIAL CORRIGIDA) ---
     with abas_gui[1]:
         st.header("📋 Tabela de Jogos e Placares Oficiais")
         st.write("Abaixo você confere o andamento das partidas e o impacto direto na sua pontuação.")
@@ -231,10 +230,11 @@ else:
                 jogos_processados.append((datetime.fromisoformat(d_l), x))
             except: pass
             
-        # Organizados por ordem de acontecimento (mais antigos primeiro ou vice-versa)
         for data_j, j in sorted(jogos_processados, key=lambda val: val[0]):
             id_j = int(j["id"])
-            tem_placar_oficial = j.get("gols_real_a") is not None and j.get("gols_real_b") is not None
+            
+            # Validação aprimorada para evitar falsos negativos ou vazios do Supabase
+            tem_placar_oficial = j.get("gols_real_a") is not None and j.get("gols_real_b") is not None and str(j["gols_real_a"]).strip() != "" and str(j["gols_real_b"]).strip() != ""
             palpite_efetuado = palpites_res_dict.get(id_j, None)
             
             with st.container():
@@ -246,7 +246,6 @@ else:
                     else:
                         st.markdown("<p style='color:#94A3B8; font-style:italic; margin:0; text-align:right;'>Aguardando Placar</p>", unsafe_allow_html=True)
                 
-                # Layout visual do confronto
                 col_timeA, col_placar, col_timeB, col_pontos = st.columns([3, 2, 3, 3])
                 
                 with col_timeA:
@@ -265,7 +264,7 @@ else:
                     if palpite_efetuado:
                         txt_seu_chute = f"Seu palpite: **{palpite_efetuado['gols_time_a']} x {palpite_efetuado['gols_time_b']}**"
                         if tem_placar_oficial:
-                            pts_ganhos = calcular_pontos(palpite_efetuado['gols_time_a'], palpite_efetuado['gols_time_b'], j['gols_real_a'], j['gols_real_b'])
+                            pts_ganhos = calcular_pontos(int(palpite_efetuado['gols_time_a']), int(palpite_efetuado['gols_time_b']), int(j['gols_real_a']), int(j['gols_real_b']))
                             if pts_ganhos == 5:
                                 st.success(f"{txt_seu_chute} (+5 pts 🔥 Placar Cheio!)")
                             elif pts_ganhos == 3:
@@ -311,7 +310,7 @@ else:
                 st.success("Palpites salvos!")
         else: st.warning("🔒 Torneio iniciado. Palpites trancados.")
 
-    # --- ABA 4: RANKING GENERATIVO E DINÂMICO ---
+    # --- ABA 4: RANKING GENERATIVO E DINÂMICO (CORRIGIDO COM SANITIZAÇÃO) ---
     with abas_gui[3]:
         st.header("📊 Classificação da Empresa")
         todos_palpites = buscar_dados("palpites")
@@ -322,19 +321,31 @@ else:
 
         mapa_nomes = {p["id_usuario"]: p.get("nome_participante", "Anônimo") for p in todos_perfis if p.get("nome_participante")}
 
-        pontos_usuarios = {}
+        # Inicializa todos os usuários com 0 pontos para garantir que apareçam no ranking mesmo sem pontos
+        pontos_usuarios = {p["id_usuario"]: 0 for p in todos_perfis if p.get("id_usuario")}
+        
         for p in todos_palpites:
             uid = p["id_usuario"]
             jogo = next((j for j in jogos_banco if j["id"] == p["id_jogo"]), None)
+            
+            # Validação robusta de tipos e conteúdo para sincronizar imediatamente
             if jogo and jogo.get("gols_real_a") is not None and jogo.get("gols_real_b") is not None:
-                pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + calcular_pontos(p["gols_time_a"], p["gols_time_b"], jogo["gols_real_a"], jogo["gols_real_b"])
+                if str(jogo["gols_real_a"]).strip() != "" and str(jogo["gols_real_b"]).strip() != "":
+                    pontos_calculados = calcular_pontos(
+                        int(p["gols_time_a"]), 
+                        int(p["gols_time_b"]), 
+                        int(jogo["gols_real_a"]), 
+                        int(jogo["gols_real_b"])
+                    )
+                    pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + pontos_calculados
 
         for pc in todos_palpites_comp:
             uid = pc["id_usuario"]
-            if r_c.get("campeon") and pc["campeon"] == r_c["campeon"]: pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + 50
-            if r_c.get("vice") and pc["vice"] == r_c["vice"]: pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + 25
-            if r_c.get("artilheiro") and pc["artilheiro"] == r_c["artilheiro"]: pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + 25
-            if r_c.get("melhor_jogador") and pc["melhor_jogador"] == r_c["melhor_jogador"]: pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + 25
+            if uid in pontos_usuarios:
+                if r_c.get("campeon") and pc["campeon"] == r_c["campeon"]: pontos_usuarios[uid] += 50
+                if r_c.get("vice") and pc["vice"] == r_c["vice"]: pontos_usuarios[uid] += 25
+                if r_c.get("artilheiro") and pc["artilheiro"] == r_c["artilheiro"]: pontos_usuarios[uid] += 25
+                if r_c.get("melhor_jogador") and pc["melhor_jogador"] == r_c["melhor_jogador"]: pontos_usuarios[uid] += 25
 
         ranking_ordenado = sorted(pontos_usuarios.items(), key=lambda item: item[1], reverse=True)
         if ranking_ordenado:
@@ -422,6 +433,7 @@ else:
                         res_b = st.number_input("Gols do Time B", min_value=0, step=1, value=g_real_b_inicial, key="res_b")
                         
                         if st.button("Gravar Placar Oficial / Atualizar Ranking"):
-                            requisicao_supabase("PATCH", f"rest/v1/jogos?id=eq.{id_real}", json_data={"gols_real_a": res_a, "gols_real_b": res_b})
+                            requisicao_supabase("PATCH", f"rest/v1/jogos?id=eq.{id_real}", json_data={"gols_real_a": int(res_a), "gols_real_b": int(res_b)})
                             st.success("Placar atualizado! O ranking foi recalculado.")
+                            time.sleep(0.4)
                             st.rerun()
