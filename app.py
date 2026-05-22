@@ -33,7 +33,6 @@ def fazer_login(email, password):
     return (res.json()["access_token"], res.json()["user"]["id"]) if res and res.status_code == 200 else (None, None)
 
 def cadastrar_usuario(email, password, nome_completo):
-    # Envia o full_name dentro de options -> data para a Trigger ler no banco
     payload = {
         "email": email,
         "password": password,
@@ -63,7 +62,7 @@ def calcular_pontos(gols_p_a, gols_p_b, gols_r_a, gols_r_b):
 if "logado" not in st.session_state:
     st.session_state.update({"logado": False, "token": None, "user_id": None, "email": "", "nome_usuario": ""})
 
-# --- INTERFACE DE LOGIN ---
+# --- INTERFACE DE LOGIN / CADASTRO ---
 if not st.session_state.logado:
     st.title("⚽ Launchpad - Bolão da Empresa")
     aba_l, aba_c = st.tabs(["Entrar", "Criar Conta"])
@@ -75,14 +74,19 @@ if not st.session_state.logado:
             if token:
                 st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
                 
-                # Busca o nome diretamente na tabela de perfis usando autenticação válida
+                # Busca o perfil na tabela para checar o nome
                 h_auth_login = {**HEADERS, "Authorization": f"Bearer {token}"}
                 perfil = buscar_dados(f"perfis?id_usuario=eq.{uid}", custom_headers=h_auth_login)
                 
                 if perfil and isinstance(perfil, list) and len(perfil) > 0:
-                    st.session_state.nome_usuario = perfil[0].get("nome_participante", "Usuário")
+                    nome_salvo = perfil[0].get("nome_participante", "").strip()
+                    # Se o nome for o padrão da trigger ou estiver em branco, deixamos vazio para forçar o cadastro
+                    if nome_salvo and nome_salvo != "Usuário Sem Nome":
+                        st.session_state.nome_usuario = nome_salvo
+                    else:
+                        st.session_state.nome_usuario = ""
                 else:
-                    st.session_state.nome_usuario = "Usuário"
+                    st.session_state.nome_usuario = ""
                 st.rerun()
             else: 
                 st.error("Acesso negado. Verifique as suas credenciais.")
@@ -101,8 +105,31 @@ if not st.session_state.logado:
                 else: 
                     st.error("Erro ao registrar. O usuário pode já existir ou a senha é curta.")
 
-# --- SISTEMA LOGADO ---
+# --- SISTEMA APÓS LOGIN ---
 else:
+    # SE O USUÁRIO LOGOU MAS NÃO TEM NOME VALIDO SALVO (CASO DOS ANTIGOS)
+    if not st.session_state.nome_usuario or st.session_state.nome_usuario == "Usuário Sem Nome":
+        st.title("👋 Atualize seu Perfil!")
+        st.subheader("Antes de acessar os palpites, digite seu nome completo para o Ranking Geral:")
+        
+        nome_antigo = st.text_input("Seu Nome e Sobrenome:")
+        if st.button("Salvar Perfil e Entrar"):
+            if len(nome_antigo.strip()) < 3:
+                st.error("Por favor, digite um nome válido com no mínimo 3 letras.")
+            else:
+                nome_limpo = nome_antigo.strip()
+                h_auth_patch = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}"}
+                
+                # Salva o nome correto na tabela de perfis
+                requisicao_supabase("PATCH", f"rest/v1/perfis?id_usuario=eq.{st.session_state.user_id}", json_data={"nome_participante": nome_limpo}, custom_headers=h_auth_patch)
+                
+                # Atualiza a sessão e libera o app
+                st.session_state.nome_usuario = nome_limpo
+                st.success("Nome atualizado com sucesso!")
+                st.rerun()
+        st.stop() # Trava o resto da página enquanto não salvar o nome
+
+    # --- FLUXO NORMAL DO SISTEMA LIBERADO ---
     is_admin = st.session_state.email == EMAIL_ADMIN
     agora = datetime.utcnow()
     jogos_banco = buscar_dados("jogos")
@@ -147,6 +174,7 @@ else:
     else:
         st.markdown("<div style='background-color:#1E293B; padding:15px; text-align:center; border-radius:10px; color:#EF4444; font-weight:bold;'>🔒 Inscrições de palpites encerradas!</div>", unsafe_allow_html=True)
 
+    # --- BARRA LATERAL ---
     st.sidebar.markdown(f"**Usuário:** {st.session_state.nome_usuario}")
     if st.sidebar.button("Log Out"):
         st.session_state.update({"logado": False, "token": None, "user_id": None, "email": "", "nome_usuario": ""})
@@ -154,6 +182,9 @@ else:
 
     abas = ["Jogos e Palpites", "Palpites da Competição", "Ranking Geral", "Ver Palpites Alheios"]
     if is_admin: abas.append("⚙️ Painel do Admin")
+    st.tabs(abas) # Apenas declara as abas principais para manter a compatibilidade visual
+    
+    # Reatribuição das abas para as variáveis de interface gui
     abas_gui = st.tabs(abas)
 
     # --- ABA 1: JOGOS E PALPITES ---
@@ -322,4 +353,19 @@ else:
                     d_h = st.text_input("Data/Hora (AAAA-MM-DD HH:MM:SS)", value="2026-06-11 16:00:00")
                     if st.form_submit_button("Lançar Novo Jogo"):
                         res_add = requisicao_supabase("POST", "rest/v1/jogos", json_data={"time_a": t_a, "time_b": t_b, "data_hora": f"{d_h}+00", "fase": fase_sel})
-                        if res_add and res_add.status_code in [200, 201]: st.rerun()
+                        if res_add and res_add.status_code in [200, 201]: 
+                            st.success("Jogo cadastrado com sucesso!")
+                            st.rerun()
+
+                st.subheader("2. Imputar Resultados Reais")
+                opcoes_admin_jogos = [f"{jg['id']} | {jg['time_a']} x {jg['time_b']}" for jg in jogos_banco]
+                if opcoes_admin_jogos:
+                    id_j_res = st.selectbox("Escolha o jogo para atualizar o placar definitivo:", opcoes_admin_jogos, key="sb_admin_res")
+                    if id_j_res:
+                        id_real = int(id_j_res.split(" | ")[0])
+                        res_a = st.number_input("Gols do Time A", min_value=0, step=1, key="res_a")
+                        res_b = st.number_input("Gols do Time B", min_value=0, step=1, key="res_b")
+                        if st.button("Gravar Placar Oficial"):
+                            requisicao_supabase("PATCH", f"rest/v1/jogos?id=eq.{id_real}", json_data={"gols_real_a": res_a, "gols_real_b": res_b})
+                            st.success("Placar oficial gravado!")
+                            st.rerun()
