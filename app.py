@@ -36,8 +36,9 @@ def cadastrar_usuario(email, password):
     res = requisicao_supabase("POST", "auth/v1/signup", json_data={"email": email, "password": password})
     return res is not None and res.status_code in [200, 201]
 
-def buscar_dados(tabela):
-    res = requisicao_supabase("GET", f"rest/v1/{tabela}?select=*")
+def buscar_dados(tabela, custom_headers=None):
+    headers = custom_headers if custom_headers else HEADERS
+    res = requisicao_supabase("GET", f"rest/v1/{tabela}?select=*", custom_headers=headers)
     return res.json() if res and res.status_code == 200 else []
 
 def calcular_pontos(gols_p_a, gols_p_b, gols_r_a, gols_r_b):
@@ -63,10 +64,15 @@ if not st.session_state.logado:
             token, uid = fazer_login(u, s)
             if token:
                 st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
-                # Busca o nome diretamente na nova tabela de perfis
-                perfil = buscar_dados(f"perfis?id_usuario=eq.{uid}")
+                
+                # CORREÇÃO CRÍTICA: Autentica a chamada de busca do perfil usando o token recém-criado
+                h_auth_login = {**HEADERS, "Authorization": f"Bearer {token}"}
+                perfil = buscar_dados(f"perfis?id_usuario=eq.{uid}", custom_headers=h_auth_login)
+                
                 if perfil and isinstance(perfil, list) and len(perfil) > 0:
-                    st.session_state.nome_usuario = perfil[0].get("nome_participante", "")
+                    nome_salvo = perfil[0].get("nome_participante", "")
+                    if nome_salvo and nome_salvo.strip() != "":
+                        st.session_state.nome_usuario = nome_salvo
                 st.rerun()
             else: 
                 st.error("Acesso negado. Verifique as suas credenciais.")
@@ -81,7 +87,7 @@ if not st.session_state.logado:
 
 # --- SISTEMA LOGADO ---
 else:
-    # Solicita o nome se a coluna estiver em branco no perfil público
+    # Solicita o nome se a coluna estiver em branco no perfil público ou na sessão
     if not st.session_state.nome_usuario:
         st.title("👋 Bem-vindo ao Super Bolão!")
         st.subheader("Para continuar, defina o nome que aparecerá no Ranking Geral da empresa:")
@@ -94,7 +100,7 @@ else:
                 nome_limpo = nome_digitado.strip()
                 h_auth = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}"}
                 
-                # Faz o update na nova tabela de perfis criados automaticamente
+                # Atualiza o perfil na tabela com o cabeçalho autenticado
                 requisicao_supabase("PATCH", f"rest/v1/perfis?id_usuario=eq.{st.session_state.user_id}", json_data={"nome_participante": nome_limpo}, custom_headers=h_auth)
                 
                 st.session_state.nome_usuario = nome_limpo
@@ -287,7 +293,6 @@ else:
                 
                 st.metric("Total de Jogos Cadastrados", total_jogos)
                 
-                # Agora o administrador lê diretamente da tabela de perfis estruturada!
                 usuarios_validos = [u for u in todos_perfis_banco if u.get("nome_participante") and len(str(u["nome_participante"]).strip()) > 0]
                 
                 if not usuarios_validos:
