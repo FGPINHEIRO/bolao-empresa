@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 from datetime import datetime, timedelta
 
-# --- CONFIGURAÇÕES DO SUPABASE (Chave e e-mail corrigidos) ---
+# --- CONFIGURAÇÕES DO SUPABASE ---
 SUPABASE_URL = "https://hxkeahtcsmmehucmndhk.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh4a2VhaHRjc21tZWh1Y21uZGhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0NTA5ODgsImV4cCI6MjA5NTAyNjk4OH0.62RDcA4bWJA-0Ie3DWFnaFC4lWvoOTDgCWagmOJ2X34"
 
@@ -104,7 +104,11 @@ else:
         palpites_dict = {p["id_jogo"]: p for p in palpites}
 
         for j in sorted(jogos, key=lambda x: x["data_hora"]):
-            data_j = datetime.fromisoformat(j["data_hora"].replace("Z", ""))
+            # Tratamento da data para remover qualquer informação oculta de fuso horário (limpa o Z ou o +00)
+            data_limpa = j["data_hora"].replace("Z", "").split("+")[0]
+            data_j = datetime.fromisoformat(data_limpa)
+            
+            # Agora a comparação funciona perfeitamente (ambas são naive)
             bloqueado = agora > (data_j - timedelta(minutes=30))
             
             p_salvo = palpites_dict.get(j["id"], {"gols_time_a": 0, "gols_time_b": 0})
@@ -149,7 +153,7 @@ else:
                 h_auth = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}", "Prefer": "resolution=merge-duplicates"}
                 payload = {"id_usuario": st.session_state.user_id, "campeon": c_camp, "vice": c_vice, "artilheiro": c_art, "melhor_jogador": c_melhor}
                 requisicao_supabase("POST", "rest/v1/palpites_competicao", json_data=payload, custom_headers=h_auth)
-                st.success("Palpites de competição updated!")
+                st.success("Palpites de competição atualizados!")
         else:
             st.warning("🔒 O torneio já iniciou. Palpites de competição trancados.")
 
@@ -200,7 +204,10 @@ else:
         if escolha_jogo:
             id_j_sel = int(escolha_jogo.split(" | ")[0])
             j_sel = next(j for j in jogos_disponiveis if j["id"] == id_j_sel)
-            data_j_sel = datetime.fromisoformat(j_sel["data_hora"].replace("Z", ""))
+            
+            # Correção de fuso horário também na aba de espiar
+            data_limpa_sel = j_sel["data_hora"].replace("Z", "").split("+")[0]
+            data_j_sel = datetime.fromisoformat(data_limpa_sel)
             
             if agora > (data_j_sel - timedelta(minutes=30)):
                 palpites_desse_jogo = buscar_dados(f"palpites?id_jogo=eq.{id_j_sel}")
@@ -222,7 +229,6 @@ else:
                 d_h = st.text_input("Data/Hora no padrão (AAAA-MM-DD HH:MM:SS)", value="2026-06-27 15:00:00")
                 if st.form_submit_button("Lançar Novo Jogo no Sistema"):
                     payload = {"time_a": t_a, "time_b": t_b, "data_hora": f"{d_h}+00", "fase": fase_selecionada}
-                    # Corrigido o endpoint de inserção de 'jogos' para 'rest/v1/jogos'
                     requisicao_supabase("POST", "rest/v1/jogos", json_data=payload)
                     st.success("Novo confronto disponibilizado para palpites!")
 
