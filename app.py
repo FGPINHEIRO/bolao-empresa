@@ -65,7 +65,6 @@ if not st.session_state.logado:
             token, uid = fazer_login(u, s)
             if token:
                 st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
-                # Busca se o usuário já possui um nome configurado na tabela de competições
                 p_comp = buscar_dados(f"palpites_competicao?id_usuario=eq.{uid}")
                 if p_comp and p_comp[0].get("nome_participante"):
                     st.session_state.nome_usuario = p_comp[0]["nome_participante"]
@@ -83,7 +82,6 @@ if not st.session_state.logado:
 
 # --- SISTEMA LOGADO ---
 else:
-    # SE O USUÁRIO NÃO TIVER UM NOME NO BANCO, TRAVA A TELA ATÉ ELE CRIAR UM
     if not st.session_state.nome_usuario:
         st.title("👋 Bem-vindo ao Super Bolão!")
         st.subheader("Para continuar, defina o nome que aparecerá no Ranking Geral da empresa:")
@@ -106,6 +104,13 @@ else:
     
     jogos_banco = buscar_dados("jogos")
     
+    # Mapeia dinamicamente todos os países únicos que aparecem na tabela de jogos
+    paises_da_copa = set()
+    for jg in jogos_banco:
+        if jg.get("time_a"): paises_da_copa.add(jg["time_a"])
+        if jg.get("time_b"): paises_da_copa.add(jg["time_b"])
+    lista_paises = sorted(list(paises_da_copa))
+    
     if not jogos_banco:
         jogos_para_relogio = [
             {"data_hora": "2026-06-11 19:00:00+00", "time_a": "México", "time_b": "Estados Unidos", "fase": "Grupos"}
@@ -116,7 +121,6 @@ else:
     st.title("🏆 Super Bolão Copa 2026")
     st.caption(f"Participante: **{st.session_state.nome_usuario}** ({st.session_state.email})")
     
-    # Tratamento seguro contra o TypeError de conversão de data/hora
     proximas_travas = []
     for j in jogos_para_relogio:
         d_limpa = j["data_hora"].replace("Z", "").split("+")[0].split(".")[0]
@@ -220,7 +224,7 @@ else:
                             st.toast("Palpite computado!")
                 st.markdown("---")
 
-    # --- ABA 2: PALPITES DA COMPETIÇÃO ---
+    # --- ABA 2: PALPITES DA COMPETIÇÃO (MELHORADA COM SELECTBOX DE PAÍSES REAIS) ---
     with abas_gui[1]:
         st.header("🏆 Palpites de Longo Prazo")
         primeiro_jogo_copa = datetime(2026, 6, 11, 16, 0) 
@@ -231,8 +235,19 @@ else:
 
         st.write("Dê os seus palpites definitivos até o primeiro jogo do torneio começar!")
         
-        c_camp = st.text_input("Quem será o Campeão? (50 pts)", value=p_c_atual["campeon"], disabled=competicao_bloqueada)
-        c_vice = st.text_input("Quem será o Vice-Campeão? (25 pts)", value=p_c_atual["vice"], disabled=competicao_bloqueada)
+        # Se existirem países cadastrados na tabela de jogos, usa o Selectbox estruturado
+        if lista_paises:
+            # Identifica o índice salvo anteriormente para manter selecionado na tela
+            idx_camp = lista_paises.index(p_c_atual["campeon"]) if p_c_atual["campeon"] in lista_paises else 0
+            idx_vice = lista_paises.index(p_c_atual["vice"]) if p_c_atual["vice"] in lista_paises else 0
+            
+            c_camp = st.selectbox("Quem será o Campeão? (50 pts)", options=lista_paises, index=idx_camp, disabled=competicao_bloqueada)
+            c_vice = st.selectbox("Quem será o Vice-Campeão? (25 pts)", options=lista_paises, index=idx_vice, disabled=competicao_bloqueada)
+        else:
+            # Caso não existam jogos, mantém o input de texto livre temporariamente
+            c_camp = st.text_input("Quem será o Campeão? (50 pts)", value=p_c_atual["campeon"], disabled=competicao_bloqueada)
+            c_vice = st.text_input("Quem será o Vice-Campeão? (25 pts)", value=p_c_atual["vice"], disabled=competicao_bloqueada)
+            
         c_art = st.text_input("Quem será o Artilheiro? (25 pts)", value=p_c_atual["artilheiro"], disabled=competicao_bloqueada)
         c_melhor = st.text_input("Quem será o Melhor Jogador? (25 pts)", value=p_c_atual["melhor_jogador"], disabled=competicao_bloqueada)
 
@@ -253,7 +268,6 @@ else:
         res_comp = buscar_dados("resultados_competicao")
         r_c = res_comp[0] if res_comp else {}
 
-        # Mapeamento de nomes de participantes reais
         mapa_nomes = {p["id_usuario"]: p.get("nome_participante", f"Usuário {p['id_usuario'][:6]}") for p in todos_palpites_comp if p.get("nome_participante")}
 
         pontos_usuarios = {}
@@ -327,7 +341,6 @@ else:
                         nome_p = usr.get("nome_participante", "Nome Não Definido")
                         uid_p = usr["id_usuario"]
                         
-                        # Filtra quantos palpites este usuário específico realizou
                         palpites_feitos = len([p for p in todos_palpites_banco if p["id_usuario"] == uid_p])
                         faltam = max(0, total_jogos - palpites_feitos)
                         
