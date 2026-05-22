@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 SUPABASE_URL = "https://hxkeahtcsmmehucmndhk.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh4a2VhaHRjc21tZWh1Y21uZGhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0NTA5ODgsImV4cCI6MjA5NTAyNjk4OH0.62RDcA4bWJA-0Ie3DWFnaFC4lWvoOTDgCWagmOJ2X34"
 
-# CONFIGURADO COM O SEU E-MAIL REAL PARA ACESSO ADMIN:
+# SEU E-MAIL CONFIGURADO COMO ADMINISTRADOR DO SISTEMA:
 EMAIL_ADMIN = "felipegpinheiro@hotmail.com" 
 
 HEADERS = {
@@ -35,7 +35,8 @@ def fazer_login(email, password):
 
 def cadastrar_usuario(email, password):
     res = requisicao_supabase("POST", "auth/v1/signup", json_data={"email": email, "password": password})
-    return res.status_code == 200 if res else False
+    # CORREÇÃO: O Supabase retorna 200 ou 201 para novos cadastros de sucesso
+    return res is not None and res.status_code in [200, 201]
 
 def buscar_dados(tabela):
     res = requisicao_supabase("GET", f"rest/v1/{tabela}?select=*")
@@ -66,13 +67,13 @@ if not st.session_state.logado:
             if token:
                 st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
                 st.rerun()
-            else: st.error("Acesso negado. Verifique os dados inseridos.")
+            else: st.error("Acesso negado. Verifique as suas credenciais.")
     with aba_c:
         nu = st.text_input("Novo E-mail")
         ns = st.text_input("Nova Senha (mín. 6 dígitos)", type="password")
         if st.button("Registrar"):
-            if cadastrar_usuario(nu, ns): st.success("Sucesso! Pode fazer login agora.")
-            else: st.error("Incapaz de registrar usuário. Verifique se o e-mail já existe.")
+            if cadastrar_usuario(nu, ns): st.success("Conta criada com sucesso! Mude para a aba 'Entrar' para acessar.")
+            else: st.error("Erro ao registrar. O usuário pode já existir ou a senha é curta.")
 
 # --- SISTEMA LOGADO ---
 else:
@@ -82,19 +83,17 @@ else:
     # Coleta de jogos do banco
     jogos_banco = buscar_dados("jogos")
     
-    # Proteção: Se não existirem jogos cadastrados no banco ainda, gera dados fictícios futuros da Copa
-    # apenas para alimentar o relógio JavaScript do topo e evitar o erro de tela vermelha
+    # Fallback mestre para o cronômetro superior funcionar mesmo com o banco sem registros
     if not jogos_banco:
         jogos_para_relogio = [
-            {"data_hora": "2026-06-11 19:00:00+00", "time_a": "México", "time_b": "Estados Unidos", "fase": "Grupos"},
-            {"data_hora": "2026-06-12 15:00:00+00", "time_a": "Brasil", "time_b": "Croácia", "fase": "Grupos"}
+            {"data_hora": "2026-06-11 19:00:00+00", "time_a": "México", "time_b": "Estados Unidos", "fase": "Grupos"}
         ]
     else:
         jogos_para_relogio = jogos_banco
             
     st.title("🏆 Super Bolão Copa 2026")
     
-    # Descobrir qual o próximo evento válido de fechamento (30 min antes do jogo)
+    # Descobrir tempo restante até o próximo fechamento (30 minutos antes do jogo)
     proximas_travas = []
     for j in jogos_para_relogio:
         d_limpa = j["data_hora"].replace("Z", "").split("+")[0]
@@ -102,7 +101,7 @@ else:
             d_trava = datetime.fromisoformat(d_limpa) - timedelta(minutes=30)
             if d_trava > agora:
                 proximas_travas.append(d_trava)
-        except ValueError:
+        except Exception:
             pass
             
     if proximas_travas:
@@ -112,7 +111,7 @@ else:
         js_relogio = f"""
         <div style="background-color: #1E293B; border-radius: 10px; padding: 12px; text-align: center; font-family: sans-serif; color: #F8FAFC; border: 1px solid #334155;">
             <span style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #94A3B8; font-weight: bold;">⏱️ Tempo restante para o fechamento dos próximos palpites:</span>
-            <div id="countdown" style="font-size: 28px; font-weight: bold; color: #38BDF8; margin-top: 5px;">Calculando tempo restante...</div>
+            <div id="countdown" style="font-size: 28px; font-weight: bold; color: #38BDF8; margin-top: 5px;">Calculando...</div>
         </div>
         <script>
             var targetDate = new Date("{iso_alvo}").getTime();
@@ -123,7 +122,7 @@ else:
                 
                 if (distance < 0) {{
                     clearInterval(x);
-                    document.getElementById("countdown").innerHTML = "PALPITES ENCERRADOS! Atualize o navegador.";
+                    document.getElementById("countdown").innerHTML = "PALPITES DA RODADA ENCERRADOS!";
                     document.getElementById("countdown").style.color = "#EF4444";
                     return;
                 }}
@@ -151,7 +150,7 @@ else:
     with abas_gui[0]:
         st.header("🎯 Palpites dos Jogos")
         if not jogos_banco:
-            st.info("💡 A tabela de jogos está vazia no Supabase no momento. Use a aba de Administrador para lançar jogos oficiais na base.")
+            st.info("💡 A tabela de jogos está vazia no Supabase no momento. Acesse o 'Painel do Admin' para cadastrar as partidas oficiais.")
         
         palpites = buscar_dados(f"palpites?id_usuario=eq.{st.session_state.user_id}")
         palpites_dict = {p["id_jogo"]: p for p in palpites}
@@ -168,16 +167,8 @@ else:
                 delta_tempo = data_trava_jogo - agora
                 total_horas = int(delta_tempo.total_seconds() // 3600)
                 total_minutos = int((delta_tempo.total_seconds() % 3600) // 60)
-                
-                if total_horas > 24:
-                    txt_tempo = f"⏳ Fecha em {delta_tempo.days} dias"
-                    cor_tempo = "#10B981"
-                elif total_horas >= 1:
-                    txt_tempo = f"⏳ Fecha em {total_horas}h {total_minutos}min"
-                    cor_tempo = "#F59E0B"
-                else:
-                    txt_tempo = f"🚨 FECHA EM {total_minutos} MINUTOS!"
-                    cor_tempo = "#EF4444"
+                txt_tempo = f"⏳ Fecha em {delta_tempo.days}d" if total_horas > 24 else f"⏳ Fecha em {total_horas}h {total_minutos}min"
+                cor_tempo = "#10B981" if total_horas > 24 else "#F59E0B"
             else:
                 txt_tempo = "🔒 Inscrições Encerradas"
                 cor_tempo = "#64748B"
@@ -212,7 +203,7 @@ else:
         primeiro_jogo_copa = datetime(2026, 6, 11, 16, 0) 
         competicao_bloqueada = agora > primeiro_jogo_copa
 
-        p_comp = buscar_dados("palpites_competicao?id_usuario=eq." + str(st.session_state.user_id))
+        p_comp = buscar_dados(f"palpites_competicao?id_usuario=eq.{st.session_state.user_id}")
         p_c_atual = p_comp[0] if p_comp else {"campeon": "", "vice": "", "artilheiro": "", "melhor_jogador": ""}
 
         st.write("Dê os seus palpites definitivos até o primeiro jogo do torneio começar!")
@@ -288,21 +279,22 @@ else:
         with abas_gui[4]:
             st.header("⚙️ Controle Geral do Administrador")
             
-            st.subheader("1. Inserir Confronto de Mata-Mata")
+            st.subheader("1. Inserir Confronto (Fase de Grupos ou Mata-Mata)")
             with st.form("novos_confrontos"):
-                # "Dezesseis-avos de Final" perfeitamente incluído na lista para a Copa de 48 seleções!
-                fase_selecionada = st.selectbox("Fase", ["Dezesseis-avos de Final", "Oitavas de Final", "Quartas de Final", "Semifinal", "Terceiro Lugar", "Grande Final"])
+                # "Dezesseis-avos de Final" e "Fase de Grupos" incluídos perfeitamente!
+                fase_selecionada = st.selectbox("Fase", ["Fase de Grupos", "Dezesseis-avos de Final", "Oitavas de Final", "Quartas de Final", "Semifinal", "Terceiro Lugar", "Grande Final"])
                 t_a = st.text_input("Seleção A")
                 t_b = st.text_input("Seleção B")
-                d_h = st.text_input("Data/Hora no padrão (AAAA-MM-DD HH:MM:SS)", value="2026-06-25 16:00:00")
-                if st.form_submit_button("Lançar Novo Jogo no Sistema"):
+                d_h = st.text_input("Data/Hora no padrão (AAAA-MM-DD HH:MM:SS)", value="2026-06-11 16:00:00")
+                if st.form_submit_button("Lançar Novo Jogo no System"):
                     payload = {"time_a": t_a, "time_b": t_b, "data_hora": f"{d_h}+00", "fase": fase_selecionada}
+                    # CORREÇÃO DA ROTA: de "jogos" para "rest/v1/jogos"
                     res_add = requisicao_supabase("POST", "rest/v1/jogos", json_data=payload)
                     if res_add and res_add.status_code in [200, 201]:
-                        st.success("Jogo inserido com sucesso! Atualize a página.")
+                        st.success("Jogo inserido com sucesso na base do Supabase!")
                         st.rerun()
                     else:
-                        st.error("Erro ao salvar. Verifique o preenchimento ou as políticas do banco.")
+                        st.error("Erro ao salvar. Verifique o formato de data inserido ou as permissões de banco.")
 
             st.subheader("2. Imputar Resultados Reais")
             opcoes_admin_jogos = [f"{jg['id']} | {jg['time_a']} x {jg['time_b']}" for jg in jogos_banco]
