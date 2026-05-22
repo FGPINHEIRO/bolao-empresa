@@ -66,40 +66,44 @@ if not st.session_state.logado:
             if token:
                 st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
                 st.rerun()
-            else: st.error("Acesso negado. Verifique os dados ou se a conta foi confirmada.")
+            else: st.error("Acesso negado. Verifique os dados inseridos.")
     with aba_c:
         nu = st.text_input("Novo E-mail")
         ns = st.text_input("Nova Senha (mín. 6 dígitos)", type="password")
         if st.button("Registrar"):
-            if cadastrar_usuario(nu, ns): st.success("Sucesso! Se o Supabase exigir, confirme o e-mail, senão faça login direto.")
-            else: st.error("Erro ao registrar. Certifique-se de que o e-mail é válido e a senha tem 6 dígitos.")
+            if cadastrar_usuario(nu, ns): st.success("Sucesso! Pode fazer login agora.")
+            else: st.error("Incapaz de registrar usuário. Verifique se o e-mail já existe.")
 
 # --- SISTEMA LOGADO ---
 else:
     is_admin = st.session_state.email == EMAIL_ADMIN
     agora = datetime.utcnow()
     
-    # Busca jogos do banco
+    # Coleta de jogos do banco
     jogos_banco = buscar_dados("jogos")
     
-    # FALLBACK INTELIGENTE: Dados padrão para o relógio mestre funcionar mesmo se o banco estiver sincronizando
+    # Proteção: Se não existirem jogos cadastrados no banco ainda, gera dados fictícios futuros da Copa
+    # apenas para alimentar o relógio JavaScript do topo e evitar o erro de tela vermelha
     if not jogos_banco:
         jogos_para_relogio = [
-            {"data_hora": "2026-06-11 19:00:00+00", "time_a": "México", "time_b": "África do Sul", "fase": "Grupos"},
-            {"data_hora": "2026-06-12 02:00:00+00", "time_a": "Coreia do Sul", "time_b": "República Tcheca", "fase": "Grupos"}
+            {"data_hora": "2026-06-11 19:00:00+00", "time_a": "México", "time_b": "Estados Unidos", "fase": "Grupos"},
+            {"data_hora": "2026-06-12 15:00:00+00", "time_a": "Brasil", "time_b": "Croácia", "fase": "Grupos"}
         ]
     else:
         jogos_para_relogio = jogos_banco
             
     st.title("🏆 Super Bolão Copa 2026")
     
-    # Encontrar as próximas travas (30 minutos antes do jogo)
+    # Descobrir qual o próximo evento válido de fechamento (30 min antes do jogo)
     proximas_travas = []
     for j in jogos_para_relogio:
         d_limpa = j["data_hora"].replace("Z", "").split("+")[0]
-        d_trava = datetime.fromisoformat(d_limpa) - timedelta(minutes=30)
-        if d_trava > agora:
-            proximas_travas.append(d_trava)
+        try:
+            d_trava = datetime.fromisoformat(d_limpa) - timedelta(minutes=30)
+            if d_trava > agora:
+                proximas_travas.append(d_trava)
+        except ValueError:
+            pass
             
     if proximas_travas:
         proxima_trava = min(proximas_travas)
@@ -108,7 +112,7 @@ else:
         js_relogio = f"""
         <div style="background-color: #1E293B; border-radius: 10px; padding: 12px; text-align: center; font-family: sans-serif; color: #F8FAFC; border: 1px solid #334155;">
             <span style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #94A3B8; font-weight: bold;">⏱️ Tempo restante para o fechamento dos próximos palpites:</span>
-            <div id="countdown" style="font-size: 28px; font-weight: bold; color: #38BDF8; margin-top: 5px;">Carregando cronômetro...</div>
+            <div id="countdown" style="font-size: 28px; font-weight: bold; color: #38BDF8; margin-top: 5px;">Calculando tempo restante...</div>
         </div>
         <script>
             var targetDate = new Date("{iso_alvo}").getTime();
@@ -119,7 +123,7 @@ else:
                 
                 if (distance < 0) {{
                     clearInterval(x);
-                    document.getElementById("countdown").innerHTML = "PALPITES ENCERRADOS! Atualize a página.";
+                    document.getElementById("countdown").innerHTML = "PALPITES ENCERRADOS! Atualize o navegador.";
                     document.getElementById("countdown").style.color = "#EF4444";
                     return;
                 }}
@@ -137,7 +141,7 @@ else:
         """
         components.html(js_relogio, height=95)
     else:
-        st.markdown("<div style='background-color:#1E293B; padding:15px; text-align:center; border-radius:10px; color:#EF4444; font-weight:bold;'>🔒 Todos os palpites foram encerrados!</div>", unsafe_allow_html=True)
+        st.markdown("<div style='background-color:#1E293B; padding:15px; text-align:center; border-radius:10px; color:#EF4444; font-weight:bold;'>🔒 Todas as inscrições de palpites encontram-se encerradas!</div>", unsafe_allow_html=True)
 
     abas = ["Jogos e Palpites", "Palpites da Competição", "Ranking Geral", "Ver Palpites Alheios"]
     if is_admin: abas.append("⚙️ Painel do Admin")
@@ -147,7 +151,7 @@ else:
     with abas_gui[0]:
         st.header("🎯 Palpites dos Jogos")
         if not jogos_banco:
-            st.info("💡 A tabela de jogos está vazia no Supabase. Vá na aba 'Painel do Admin' para cadastrar partidas ou rode o script SQL.")
+            st.info("💡 A tabela de jogos está vazia no Supabase no momento. Use a aba de Administrador para lançar jogos oficiais na base.")
         
         palpites = buscar_dados(f"palpites?id_usuario=eq.{st.session_state.user_id}")
         palpites_dict = {p["id_jogo"]: p for p in palpites}
@@ -208,7 +212,7 @@ else:
         primeiro_jogo_copa = datetime(2026, 6, 11, 16, 0) 
         competicao_bloqueada = agora > primeiro_jogo_copa
 
-        p_comp = buscar_dados(f"palpites_competicao?id_usuario=eq.{st.session_state.user_id}")
+        p_comp = buscar_dados("palpites_competicao?id_usuario=eq." + str(st.session_state.user_id))
         p_c_atual = p_comp[0] if p_comp else {"campeon": "", "vice": "", "artilheiro": "", "melhor_jogador": ""}
 
         st.write("Dê os seus palpites definitivos até o primeiro jogo do torneio começar!")
@@ -223,9 +227,9 @@ else:
                 h_auth = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}", "Prefer": "resolution=merge-duplicates"}
                 payload = {"id_usuario": st.session_state.user_id, "campeon": c_camp, "vice": c_vice, "artilheiro": c_art, "melhor_jogador": c_melhor}
                 requisicao_supabase("POST", "rest/v1/palpites_competicao", json_data=payload, custom_headers=h_auth)
-                st.success("Palpites de competição atualizados!")
+                st.success("Palpites de competição salvos!")
         else:
-            st.warning("🔒 O torneio já iniciou. Palpites de competição trancados.")
+            st.warning("🔒 O torneio já iniciou. Palpites trancados.")
 
     # --- ABA 3: RANKING EM TEMPO REAL ---
     with abas_gui[2]:
@@ -252,26 +256,21 @@ else:
             if r_c.get("melhor_jogador") and pc["melhor_jogador"] == r_c["melhor_jogador"]: pontos_usuarios[uid] = pontos_usuarios.get(uid, 0) + 25
 
         ranking_ordenado = sorted(pontos_usuarios.items(), key=lambda item: item[1], reverse=True)
-        
         if ranking_ordenado:
             for posicao, (u_id, total_pts) in enumerate(ranking_ordenado, start=1):
-                st.subheader(f"🥇 {posicao}º Lugar: ID Usuário {u_id[:8]}... — {total_pts} Pontos")
+                st.subheader(f"🥇 {posicao}º Lugar: Usuário {u_id[:8]}... — {total_pts} Pontos")
         else:
             st.info("Nenhum ponto computado até o momento.")
 
     # --- ABA 4: VER PALPITES ALHEIOS ---
     with abas_gui[3]:
         st.header("👀 Espiar Palpites Concluídos")
-        st.write("Os palpites de outros usuários só ficam visíveis quando faltarem menos de 30 minutos para o jogo começar.")
-        
         lista_opcoes_jogos = [f"{j['id']} | {j['time_a']} x {j['time_b']}" for j in jogos_banco]
         if lista_opcoes_jogos:
             escolha_jogo = st.selectbox("Selecione a partida para auditar:", lista_opcoes_jogos)
-
             if escolha_jogo:
                 id_j_sel = int(escolha_jogo.split(" | ")[0])
                 j_sel = next(j for j in jogos_banco if j["id"] == id_j_sel)
-                
                 data_limpa_sel = j_sel["data_hora"].replace("Z", "").split("+")[0]
                 data_j_sel = datetime.fromisoformat(data_limpa_sel)
                 
@@ -280,43 +279,45 @@ else:
                     for plp in palpites_desse_jogo:
                         st.text(f"Usuário {plp['id_usuario'][:8]}... chutou: {j_sel['time_a']} {plp['gols_time_a']} x {plp['gols_time_b']} {j_sel['time_b']}")
                 else:
-                    st.error("🔒 Segredo! Os palpites desta partida só serão revelados 30 minutos antes do início do jogo.")
+                    st.error("🔒 Segredo! Palpites liberados apenas 30 minutos antes do jogo.")
         else:
-            st.info("Nenhum jogo disponível para auditoria.")
+            st.info("Nenhum jogo disponível.")
 
     # --- ABA 5: PAINEL DO ADMINISTRADOR ---
     if is_admin:
         with abas_gui[4]:
             st.header("⚙️ Controle Geral do Administrador")
             
-            st.subheader("1. Inserir Confronto de Mata-Mata (Fases Finais)")
+            st.subheader("1. Inserir Confronto de Mata-Mata")
             with st.form("novos_confrontos"):
-                # NOVIDADE AQUI: "Dezesseis-avos de Final" adicionado nas opções!
+                # "Dezesseis-avos de Final" perfeitamente incluído na lista para a Copa de 48 seleções!
                 fase_selecionada = st.selectbox("Fase", ["Dezesseis-avos de Final", "Oitavas de Final", "Quartas de Final", "Semifinal", "Terceiro Lugar", "Grande Final"])
                 t_a = st.text_input("Seleção A")
                 t_b = st.text_input("Seleção B")
-                d_h = st.text_input("Data/Hora no padrão (AAAA-MM-DD HH:MM:SS)", value="2026-06-28 18:00:00")
+                d_h = st.text_input("Data/Hora no padrão (AAAA-MM-DD HH:MM:SS)", value="2026-06-25 16:00:00")
                 if st.form_submit_button("Lançar Novo Jogo no Sistema"):
                     payload = {"time_a": t_a, "time_b": t_b, "data_hora": f"{d_h}+00", "fase": fase_selecionada}
                     res_add = requisicao_supabase("POST", "rest/v1/jogos", json_data=payload)
                     if res_add and res_add.status_code in [200, 201]:
-                        st.success("Novo confronto eliminatório disponibilizado para palpites! Atualize a página.")
+                        st.success("Jogo inserido com sucesso! Atualize a página.")
+                        st.rerun()
                     else:
-                        st.error("Falha ao salvar jogo. Verifique o console de conexões do Supabase.")
+                        st.error("Erro ao salvar. Verifique o preenchimento ou as políticas do banco.")
 
-            st.subheader("2. Imputar Resultados Reais dos Jogos")
+            st.subheader("2. Imputar Resultados Reais")
             opcoes_admin_jogos = [f"{jg['id']} | {jg['time_a']} x {jg['time_b']}" for jg in jogos_banco]
             if opcoes_admin_jogos:
-                id_j_res = st.selectbox("Escolha o jogo para atualizar o placar definitivo:", opcoes_admin_jogos)
+                id_j_res = st.selectbox("Escolha o jogo para atualizar o placar definitivo:", opcoes_admin_jogos, key="sb_admin_res")
                 if id_j_res:
                     id_real = int(id_j_res.split(" | ")[0])
                     res_a = st.number_input("Gols do Time A", min_value=0, step=1, key="res_a")
                     res_b = st.number_input("Gols do Time B", min_value=0, step=1, key="res_b")
                     if st.button("Gravar Placar Oficial"):
                         requisicao_supabase("PATCH", f"rest/v1/jogos?id=eq.{id_real}", json_data={"gols_real_a": res_a, "gols_real_b": res_b})
-                        st.success("Placar oficial gravado! Ranking recalculado automaticamente.")
+                        st.success("Placar oficial gravado!")
+                        st.rerun()
             else:
-                st.info("Nenhum jogo cadastrado para atualizar resultados.")
+                st.info("Nenhum jogo cadastrado na base.")
 
             st.subheader("3. Imputar Resultados Finais da Competição")
             r_c_dados = buscar_dados("resultados_competicao")
@@ -330,4 +331,4 @@ else:
             if st.button("Encerrar Prêmiações da Copa"):
                 payload = {"campeon": f_camp, "vice": f_vice, "artilheiro": f_art, "melhor_jogador": f_melhor}
                 requisicao_supabase("PATCH", "rest/v1/resultados_competicao?id=eq.1", json_data=payload)
-                st.success("Resultados oficiais salvos com sucesso!")
+                st.success("Resultados oficiais salvos!")
