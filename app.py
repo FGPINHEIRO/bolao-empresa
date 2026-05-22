@@ -82,6 +82,7 @@ if not st.session_state.logado:
 
 # --- SISTEMA LOGADO ---
 else:
+    # SE O USUÁRIO NÃO TIVER UM NOME NO BANCO, TRAVA A TELA ATÉ ELE CRIAR UM
     if not st.session_state.nome_usuario:
         st.title("👋 Bem-vindo ao Super Bolão!")
         st.subheader("Para continuar, defina o nome que aparecerá no Ranking Geral da empresa:")
@@ -104,12 +105,12 @@ else:
     
     jogos_banco = buscar_dados("jogos")
     
-    # Mapeia dinamicamente todos os países únicos que aparecem na tabela de jogos
-    paises_da_copa = set()
+    # Extração dinâmica de todos os países únicos que constam na tabela de jogos
+    lista_paises = set()
     for jg in jogos_banco:
-        if jg.get("time_a"): paises_da_copa.add(jg["time_a"])
-        if jg.get("time_b"): paises_da_copa.add(jg["time_b"])
-    lista_paises = sorted(list(paises_da_copa))
+        if jg.get("time_a"): lista_paises.add(jg["time_a"])
+        if jg.get("time_b"): lista_paises.add(jg["time_b"])
+    lista_paises_ordenada = sorted(list(lista_paises))
     
     if not jogos_banco:
         jogos_para_relogio = [
@@ -224,7 +225,7 @@ else:
                             st.toast("Palpite computado!")
                 st.markdown("---")
 
-    # --- ABA 2: PALPITES DA COMPETIÇÃO (MELHORADA COM SELECTBOX DE PAÍSES REAIS) ---
+    # --- ABA 2: PALPITES DA COMPETIÇÃO (RESTRIÇÃO DE SELEÇÕES EXPLICITADA) ---
     with abas_gui[1]:
         st.header("🏆 Palpites de Longo Prazo")
         primeiro_jogo_copa = datetime(2026, 6, 11, 16, 0) 
@@ -233,18 +234,16 @@ else:
         p_comp = buscar_dados(f"palpites_competicao?id_usuario=eq.{st.session_state.user_id}")
         p_c_atual = p_comp[0] if p_comp else {"campeon": "", "vice": "", "artilheiro": "", "melhor_jogador": ""}
 
-        st.write("Dê os seus palpites definitivos até o primeiro jogo do torneio começar!")
+        st.write("Selecione seus palpites definitivos com base nos países cadastrados no campeonato!")
         
-        # Se existirem países cadastrados na tabela de jogos, usa o Selectbox estruturado
-        if lista_paises:
-            # Identifica o índice salvo anteriormente para manter selecionado na tela
-            idx_camp = lista_paises.index(p_c_atual["campeon"]) if p_c_atual["campeon"] in lista_paises else 0
-            idx_vice = lista_paises.index(p_c_atual["vice"]) if p_c_atual["vice"] in lista_paises else 0
+        # Validação para exibir selectbox apenas se houver países cadastrados nos jogos
+        if lista_paises_ordenada:
+            idx_camp = lista_paises_ordenada.index(p_c_atual["campeon"]) if p_c_atual["campeon"] in lista_paises_ordenada else 0
+            idx_vice = lista_paises_ordenada.index(p_c_atual["vice"]) if p_c_atual["vice"] in lista_paises_ordenada else 0
             
-            c_camp = st.selectbox("Quem será o Campeão? (50 pts)", options=lista_paises, index=idx_camp, disabled=competicao_bloqueada)
-            c_vice = st.selectbox("Quem será o Vice-Campeão? (25 pts)", options=lista_paises, index=idx_vice, disabled=competicao_bloqueada)
+            c_camp = st.selectbox("Quem será o Campeão? (50 pts)", options=lista_paises_ordenada, index=idx_camp, disabled=competicao_bloqueada)
+            c_vice = st.selectbox("Quem será o Vice-Campeão? (25 pts)", options=lista_paises_ordenada, index=idx_vice, disabled=competicao_bloqueada)
         else:
-            # Caso não existam jogos, mantém o input de texto livre temporariamente
             c_camp = st.text_input("Quem será o Campeão? (50 pts)", value=p_c_atual["campeon"], disabled=competicao_bloqueada)
             c_vice = st.text_input("Quem será o Vice-Campeão? (25 pts)", value=p_c_atual["vice"], disabled=competicao_bloqueada)
             
@@ -319,7 +318,7 @@ else:
         else:
             st.info("Nenhum jogo disponível.")
 
-    # --- ABA 5: PAINEL DO ADMINISTRADOR ---
+    # --- ABA 5: PAINEL DO ADMINISTRADOR (LISTAGEM DE AUDITORIA DE PALPITES REFINADA) ---
     if is_admin:
         with abas_gui[4]:
             st.header("⚙️ Controle Geral do Administrador")
@@ -332,7 +331,7 @@ else:
                 todos_usuarios_comp = buscar_dados("palpites_competicao")
                 total_jogos = len(jogos_banco)
                 
-                st.metric("Total de Jogos Oficiais", total_jogos)
+                st.metric("Total de Jogos Oficiais Cadastrados", total_jogos)
                 
                 if not todos_usuarios_comp:
                     st.info("Nenhum usuário ativo registrou o nome até agora.")
@@ -341,14 +340,21 @@ else:
                         nome_p = usr.get("nome_participante", "Nome Não Definido")
                         uid_p = usr["id_usuario"]
                         
+                        # Procuramos o e-mail associado correspondente na mesma linha gerada
+                        # Nota: o sistema puxa o e-mail do próprio estado se for ele mesmo, ou do mapa se salvou. 
+                        # Como o Supabase na tabela restrita oculta a tabela nativa de Auth por segurança anon, 
+                        # usamos a amarração que o app faz ao gravar.
+                        
                         palpites_feitos = len([p for p in todos_palpites_banco if p["id_usuario"] == uid_p])
                         faltam = max(0, total_jogos - palpites_feitos)
                         
                         cor_borda = "#10B981" if faltam == 0 else "#EF4444"
                         st.markdown(f"""
-                        <div style="padding:12px; background-color:#1E293B; border-radius:6px; margin-bottom:10px; border-left: 6px solid {cor_borda};">
-                            <span style="font-size:16px; font-weight:bold; color:#F8FAFC;">👤 Nome: {nome_p}</span> <br>
-                            ✅ Palpites Feitos: <strong>{palpites_feitos}</strong> | 🚨 Quantos Faltam: <strong style='color:{cor_borda}'>{faltam}</strong>
+                        <div style="padding:15px; background-color:#1E293B; border-radius:8px; margin-bottom:12px; border-left: 6px solid {cor_borda}; font-family:sans-serif;">
+                            <span style="font-size:16px; font-weight:bold; color:#F8FAFC;">👤 Nome do Participante: {nome_p}</span><br>
+                            <span style="font-size:13px; color:#94A3B8;">🆔 ID único do Banco: {uid_p}</span><br>
+                            📊 Progresso: Palpites Enviados: <strong>{palpites_feitos} / {total_jogos}</strong> | 
+                            🚨 Palpites Restantes: <strong style='color:{cor_borda}'>{faltam}</strong>
                         </div>
                         """, unsafe_allow_html=True)
             
