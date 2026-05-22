@@ -74,7 +74,6 @@ if not st.session_state.logado:
             if token:
                 st.session_state.update({"logado": True, "token": token, "user_id": uid, "email": u})
                 
-                # Busca o nome diretamente na tabela de perfis
                 h_auth_login = {**HEADERS, "Authorization": f"Bearer {token}"}
                 perfil = buscar_dados(f"perfis?id_usuario=eq.{uid}", custom_headers=h_auth_login)
                 
@@ -173,7 +172,11 @@ else:
         for data_j, j in sorted(jogos_validos, key=lambda val: val[0]):
             data_trava_jogo = data_j - timedelta(minutes=30)
             bloqueado = agora > data_trava_jogo
-            p_salvo = palpites_dict.get(j["id"], {"gols_time_a": 0, "gols_time_b": 0})
+            
+            # Recupera o palpite salvo ou inicia zerado na interface
+            p_salvo = palpites_dict.get(j["id"], None)
+            gols_a_inicial = int(p_salvo["gols_time_a"]) if p_salvo else 0
+            gols_b_inicial = int(p_salvo["gols_time_b"]) if p_salvo else 0
             
             txt_tempo = "🔒 Inscrições Encerradas" if bloqueado else "⏳ Palpites Abertos"
             cor_tempo = "#64748B" if bloqueado else "#10B981"
@@ -184,18 +187,31 @@ else:
                 with col_info2: st.markdown(f"<p style='text-align:right; font-weight:bold; color:{cor_tempo}; margin:0;'>{txt_tempo}</p>", unsafe_allow_html=True)
                 
                 col1, col2, col3, col4 = st.columns([3, 1, 3, 2])
-                with col1: g_a = st.number_input(f"{j['time_a']}", min_value=0, value=int(p_salvo["gols_time_a"]), disabled=bloqueado, key=f"inp_a_{j['id']}")
-                with col2: st.markdown("<p style='text-align:center;font-size:24px;margin-top:20px;'>X</p>", unsafe_allow_html=True)
-                with col3: g_b = st.number_input(f"{j['time_b']}", min_value=0, value=int(p_salvo["gols_time_b"]), disabled=bloqueado, key=f"inp_b_{j['id']}")
+                with col1: 
+                    g_a = st.number_input(f"{j['time_a']}", min_value=0, value=gols_a_inicial, disabled=bloqueado, key=f"inp_a_{j['id']}")
+                with col2: 
+                    st.markdown("<p style='text-align:center;font-size:24px;margin-top:20px;'>X</p>", unsafe_allow_html=True)
+                with col3: 
+                    g_b = st.number_input(f"{j['time_b']}", min_value=0, value=gols_b_inicial, disabled=bloqueado, key=f"inp_b_{j['id']}")
                 with col4:
+                    # Mostra o placar real caso o admin já tenha imputado
                     if j.get("gols_real_a") is not None:
-                        st.metric("Resultado Real", f"{j['gols_real_a']} x {j['gols_real_b']}")
-                    elif bloqueado: st.info("🔒 Bloqueado")
+                        st.metric("Resultado Oficial", f"{j['gols_real_a']} x {j['gols_real_b']}")
+                    elif bloqueado: 
+                        st.info("🔒 Bloqueado")
                     else:
-                        if st.button("Salvar", key=f"save_{j['id']}"):
+                        if st.button("Salvar Palpite", key=f"save_{j['id']}"):
                             h_auth = {**HEADERS, "Authorization": f"Bearer {st.session_state.token}", "Prefer": "resolution=merge-duplicates"}
+                            # Upsert/Merge baseado nas chaves únicas (id_usuario, id_jogo)
                             requisicao_supabase("POST", "rest/v1/palpites", json_data={"id_usuario": st.session_state.user_id, "id_jogo": j["id"], "gols_time_a": g_a, "gols_time_b": g_b}, custom_headers=h_auth)
-                            st.toast("Palpite computado!")
+                            st.toast("Palpite atualizado com sucesso!")
+                            st.rerun()
+                            
+                # MODIFICAÇÃO: Exibe o palpite atualmente gravado no banco de dados
+                if p_salvo:
+                    st.markdown(f"ℹ️ *Palpite atual válido no sistema:* **{p_salvo['gols_time_a']} x {p_salvo['gols_time_b']}**")
+                else:
+                    st.markdown("ℹ️ *Você ainda não enviou palpites para este confronto.*")
                 st.markdown("---")
 
     # --- ABA 2: PALPITES DA COMPETIÇÃO ---
@@ -229,7 +245,7 @@ else:
                 st.success("Palpites salvos!")
         else: st.warning("🔒 Torneio iniciado. Palpites trancados.")
 
-    # --- ABA 3: RANKING ---
+    # --- ABA 3: RANKING (CALCULADO DINAMICAMENTE) ---
     with abas_gui[2]:
         st.header("📊 Classificação da Empresa")
         todos_palpites = buscar_dados("palpites")
@@ -240,6 +256,7 @@ else:
 
         mapa_nomes = {p["id_usuario"]: p.get("nome_participante", "Anônimo") for p in todos_perfis if p.get("nome_participante")}
 
+        # O cálculo lê os placares em tempo real. Se o admin alterar, muda na hora aqui.
         pontos_usuarios = {}
         for p in todos_palpites:
             uid = p["id_usuario"]
@@ -258,7 +275,7 @@ else:
         if ranking_ordenado:
             for pos, (u_id, total_pts) in enumerate(ranking_ordenado, start=1):
                 st.subheader(f"🥇 {pos}º Lugar: {mapa_nomes.get(u_id, f'Usuário {u_id[:5]}')} — {total_pts} Pontos")
-        else: st.info("Nenhum ponto computado até o momento.")
+        else: st.info("Nenhum ponto computado até o momento. Aguardando resultados de jogos oficiais ou parciais.")
 
     # --- ABA 4: VER PALPITES ALHEIOS ---
     with abas_gui[3]:
@@ -327,15 +344,23 @@ else:
                             st.success("Jogo cadastrado com sucesso!")
                             st.rerun()
 
-                st.subheader("2. Imputar Resultados Reais")
+                st.subheader("2. Imputar Resultados Reais / Prévias")
                 opcoes_admin_jogos = [f"{jg['id']} | {jg['time_a']} x {jg['time_b']}" for jg in jogos_banco]
                 if opcoes_admin_jogos:
-                    id_j_res = st.selectbox("Escolha o jogo para atualizar o placar definitivo:", opcoes_admin_jogos, key="sb_admin_res")
+                    id_j_res = st.selectbox("Escolha o jogo para atualizar o placar definitivo ou simulação:", opcoes_admin_jogos, key="sb_admin_res")
                     if id_j_res:
                         id_real = int(id_j_res.split(" | ")[0])
-                        res_a = st.number_input("Gols do Time A", min_value=0, step=1, key="res_a")
-                        res_b = st.number_input("Gols do Time B", min_value=0, step=1, key="res_b")
-                        if st.button("Gravar Placar Oficial"):
+                        
+                        # Resgata o placar real atual do jogo para facilitar edições
+                        jogo_selecionado = next(jg for jg in jogos_banco if jg["id"] == id_real)
+                        g_real_a_inicial = int(jogo_selecionado["gols_real_a"]) if jogo_selecionado.get("gols_real_a") is not None else 0
+                        g_real_b_inicial = int(jogo_selecionado["gols_real_b"]) if jogo_selecionado.get("gols_real_b") is not None else 0
+
+                        res_a = st.number_input("Gols do Time A", min_value=0, step=1, value=g_real_a_inicial, key="res_a")
+                        res_b = st.number_input("Gols do Time B", min_value=0, step=1, value=g_real_b_inicial, key="res_b")
+                        
+                        if st.button("Gravar Placar Oficial / Atualizar Ranking"):
+                            # Atualiza ou sobrescreve o resultado no banco
                             requisicao_supabase("PATCH", f"rest/v1/jogos?id=eq.{id_real}", json_data={"gols_real_a": res_a, "gols_real_b": res_b})
-                            st.success("Placar oficial gravado!")
+                            st.success("Placar atualizado! O ranking foi recalculado.")
                             st.rerun()
